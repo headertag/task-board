@@ -1,0 +1,36 @@
+# Local dependencies and generated output
+node_modules/
+dist/
+.next/
+.vinext/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+# Private configuration and runtime state
+.env
+.env.*
+!.env.example
+.openai/hosting.json
+.wrangler/
+.sites-runtime/
+.git/
+# No task data or authentication material belongs in source control
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite*
+*.pem
+*.key
+*.log
+*credentials*
+*token*
+exports/
+snapshots/
+backups/
+private-data/
+*.tar
+*.tar.gz
+*.zip
+.DS_Store
