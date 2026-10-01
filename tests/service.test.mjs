@@ -51,3 +51,6 @@ timed=await a.mutate('complete',{requestKey:'timed-complete-test',id:timed.id,ex
 await assert.rejects(()=>a.mutate('create',{requestKey:'invalid-time-test',task:{title:'Invalid time',dueDate:'2026-09-29',dueTime:'25:00',timezone:'UTC'}}));
 await assert.rejects(()=>a.mutate('create',{requestKey:'time-without-zone',task:{title:'No zone',dueDate:'2026-09-29',dueTime:'10:00'}}));
 console.log('PASS: local due time survives monthly completion and invalid/missing-zone times are rejected.');
+
+const {safeError}=await import('../lib/operations.ts');
+try{await execute(a,'create_task',{task:{title:'Unsafe link test',resources:[{kind:'link',label:'Unsafe',url:'javascript:alert(1)'}]},requestKey:'friendly-validation-test'});assert.fail('Expected unsafe URL rejection')}catch(error){const message=safeError(error).body.message;assert.match(message,/Link or place 1/);assert.ok(!message.includes('task.resources')&&!message.includes('patch.resources'));console.log('PASS validation errors use friendly field labels')}

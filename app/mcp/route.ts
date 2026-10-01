@@ -1,5 +1,5 @@
 import { getChatGPTUser } from '../chatgpt-auth';
-import { database } from '../../lib/db';
+import { database,imageStorage } from '../../lib/db';
 import { BoardService } from '../../lib/service';
 import { execute,safeError,toolDefinitions } from '../../lib/operations';
 export const dynamic='force-dynamic';
@@ -15,5 +15,5 @@ if(rpc.method==='tools/list')return reply({tools:toolDefinitions});
 if(rpc.method!=='tools/call')return err(-32601,'Method not found',404);
 const user=await getChatGPTUser();if(!user)return err(-32001,'Sign in is required for task data',401);
 if(!toolDefinitions.some(t=>t.name===rpc.params?.name))return err(-32602,'Unknown tool');
-try{const result=await execute(new BoardService(database(),user.userId),rpc.params.name,rpc.params.arguments??{});return reply({content:[{type:'text',text:JSON.stringify(result)}],isError:false})}catch(e){const x=safeError(e);return reply({content:[{type:'text',text:JSON.stringify(x.body)}],isError:true})}}
+try{const result=await execute(new BoardService(database(),user.userId,imageStorage()),rpc.params.name,rpc.params.arguments??{});return reply({content:[{type:'text',text:JSON.stringify(result)}],isError:false})}catch(e){const x=safeError(e);return reply({content:[{type:'text',text:JSON.stringify(x.body)}],isError:true})}}
 export async function GET(){return new Response('Stateless MCP: send JSON-RPC with POST',{status:405,headers:{Allow:'POST'}})}

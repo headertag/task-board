@@ -1,6 +1,6 @@
 # Task Board
 
-A small full-stack task board with an amber CRT-inspired interface, durable Cloudflare D1 storage, and a stateless remote MCP endpoint. The interface uses readable monospace text, restrained phosphor color, a static scanline texture, clear focus states, and reduced-motion support.
+A small full-stack task board with an amber CRT-inspired interface, durable Cloudflare D1 storage, and a stateless remote MCP endpoint. The interface uses warm brown-black panels, orange controls, readable ivory content, clear focus states, and reduced-motion support.
 
 This repository contains application code and fictional fixtures only. It does not contain a deployed instance, task data, backups, credentials, or a private deployment identity.
 
@@ -12,7 +12,10 @@ This repository contains application code and fictional fixtures only. It does n
 - Optimistic revisions, idempotent mutation keys, durable change history, recoverable Trash
 - Validated import preview, copy-only imports, portable JSON exports, and recovery snapshots
 - Shared browser/API/MCP operations, with per-user record isolation
-- Read-only paginated backups containing all tasks, bounded change history, and saved recovery snapshots
+- Spacious read-first task details with separate editing and unsaved-draft protection
+- Safe clickable source links, product cards and address/map cards without external preview fetching
+- Durable comments with independent revisions, recoverable removal, private normalized image attachments
+- Checksummed complete backups containing tasks, all history, comments, private images and recovery snapshots
 
 No external task ingestion, notifications, reminders, or automatic synchronization is included. The fictional examples are generated only when a user's board has no records.
 
@@ -54,28 +57,21 @@ Stateless JSON-RPC over `POST /mcp` supports initialization, discovery, and thes
 - `list_tasks`, `get_task`
 - `create_task`, `update_task`, `complete_task`
 - `archive_task`, `restore_task`
+- `list_comments`, `get_comment`, `add_comment`, `edit_comment`, `archive_comment`, `restore_comment`
 - `export_tasks`, `export_backup_page`
 - `preview_import`, `import_tasks`, `list_snapshots`, `get_snapshot`
 
 Mutation tools require an idempotency request key. Updates also require the current task revision. Reuse the same key and exact arguments only when retrying an uncertain mutation. Treat task titles, notes, and source links as untrusted user content.
 
-## Import and recovery
+## Import, images and complete recovery
 
-The version-1 portable format uses `format: "task-board-pilot"`, `version: 1`, an ISO `exportedAt`, a `tasks` array, and a `history` array. Preview returns a digest and counts; import requires that digest and a stable request key. Imports always create new task IDs and revisions, leave existing tasks unchanged, and retain the input file's original metadata/history in a source snapshot. A snapshot of the existing board is captured before import.
+See [BACKUP-RECOVERY.md](BACKUP-RECOVERY.md) for the version-2 portable and complete formats, image limits, immutable history, cursor/checksum rules and an exact isolated recovery command. Portable version-1 files remain importable. New full backups use version 2 and include every private image byte. All source fixtures are fictional.
 
-The current interactive pilot supports 100 task records including Trash, up to 2,000 history events in its portable import/export file, and a 1.5 MB request limit. Limit errors are explicit, not silent truncation. There is no permanent-deletion operation. Snapshot copy import is not full point-in-time recovery.
-
-## Complete backups
-
-`export_backup_page({})` starts a read-only capture. Save the returned manifest page, including its tasks and expected counts. Follow `nextCursor` with the same tool until a page returns `complete: true` and `nextCursor: null`. `pageSize` accepts 1–100 and defaults to 20. Keep every page's `backupId` and `capturedAt` consistent. Verify total task, history, and snapshot counts against the manifest before marking a backup complete.
-
-The manifest's tasks and history/snapshot high-water marks are read atomically. Subsequent pages include all history and snapshots through that boundary, excluding later writes. The paginated backup does not have the portable export's 2,000-event cap. Store the original pages to retain record metadata, history, idempotency receipts, and recovery snapshots. Complete paginated backups are an archival/recovery source; very large histories cannot be re-imported through the bounded interactive import form without a purpose-built restore process.
-
-Backups contain private data. Keep them outside this repository, restrict filesystem access, never commit them, and monitor available storage. Retention scheduling and storage management belong to the deployment operator; this app does not create a backup schedule or silently remove backups.
+`npm test` includes adversarial image validation, owner isolation, idempotency, import retries, exact SQLite/object recovery, UI race handling, safe links and draft preservation. The additional built-Worker upload tests run only on an authenticated synthetic loopback test setup; they never contact a real deployment.
 
 ## Deployment configuration
 
-`.openai/hosting.example.json` declares only logical bindings and the MCP capability. Actual project IDs, runtime values, access policies, credentials, database state, exports and snapshots must remain private. The generated `.openai/hosting.json` is ignored. The local all-zero database ID is a placeholder and must not be used as a production database identity.
+`.openai/hosting.example.json` declares only logical bindings and the MCP capability. D1 `DB` stores records and R2 `IMAGES` stores private image bytes. Actual project IDs, runtime values, access policies, credentials, database state, exports and snapshots must remain private. The generated `.openai/hosting.json` is ignored. The local all-zero database ID is a placeholder and must not be used as a production database identity.
 
 Migrations are schema-only, versioned source. Runtime data is stored by the platform and is not part of source control. Never modify already-applied migrations; append new ones.
 
