@@ -1,0 +1,11 @@
+# Yet Another Task Board
+
+> Private, owner-scoped task board with a stateless remote MCP endpoint. This source repository contains no live endpoint or user data.
+
+## Agent documentation
+
+- [Connection guide](https://github.com/headertag/task-board/blob/main/docs/agent-setup.md): Supported transport, authentication boundaries and an owner-approved read-only connection test
+- [Operation contract](https://github.com/headertag/task-board/blob/main/docs/agent-operations.md): Revisions, safe retries, private data and copy imports
+- [Backup and recovery](https://github.com/headertag/task-board/blob/main/BACKUP-RECOVERY.md): Complete captures, validation, images and isolated recovery
+- [Server descriptor template](https://github.com/headertag/task-board/blob/main/server.example.json): Registry-schema example with a placeholder URL; not a live service
+- [Setup and security](https://github.com/headertag/task-board/blob/main/README.md): Local setup and required authentication trust boundary

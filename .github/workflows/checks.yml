@@ -15,4 +15,5 @@ jobs:
       - run: npm run setup
       - run: npm run typecheck
       - run: npm test
+      - run: node --experimental-transform-types --import ./tests/loader.mjs tests/mcp-metadata.test.mjs
       - run: npm run build

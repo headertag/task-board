@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.headertag/task-board",
+  "title": "Yet Another Task Board",
+  "description": "Private task board with durable history, comments, images and portable backups.",
+  "version": "1.1.0",
+  "repository": {
+    "url": "https://github.com/headertag/task-board",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/headertag/task-board/blob/main/docs/agent-setup.md",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://task-board.example.com/mcp"
+    }
+  ]
+}

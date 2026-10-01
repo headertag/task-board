@@ -81,19 +81,18 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 ::selection{background:#985219;color:#fff6eb}
 .app{min-height:100vh;background:radial-gradient(ellipse at 50% 0,#261707 0,transparent 65%),#100a05}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:17px 32px;border-bottom:1px solid #3c2814;background:#110b05}
-.brand{display:flex;gap:12px;align-items:center}
-.brandmark{width:37px;height:37px;display:grid;place-items:center;color:#ff9b38;border:1px solid #684019;background:#191006;border-radius:6px}
-.brand h1{font-size:18px;letter-spacing:-.3px;margin:0 0 6px;font-weight:650;color:#f5eee5}
-.pilot{font-size:9px;font-weight:500;letter-spacing:.9px;vertical-align:middle;margin-left:7px;background:#271908;border:1px solid #68431c;padding:3px 5px;border-radius:3px;color:#df963c}
-.brand p{display:flex;gap:5px;align-items:center;font-size:10px;color:#b8956e;margin:0}.divider{margin:0 4px;color:#82562c}
+.brand{display:flex;gap:12px;align-items:center;min-width:0}.brand>div:last-child{min-width:0}
+.brandmark{flex-shrink:0;width:37px;height:37px;display:grid;place-items:center;color:#ff9b38;border:1px solid #684019;background:#191006;border-radius:6px}
+.brand h1{font-size:18px;line-height:1.3;overflow-wrap:normal;letter-spacing:-.3px;margin:0 0 6px;font-weight:650;color:#f5eee5}
+.brand p{display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:10px;color:#b8956e;margin:0}.divider{margin:0 4px;color:#82562c}
 .topactions{display:flex;align-items:center;gap:9px}
 .primary,.secondary,.quiet,.icon-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;border-radius:5px;font-weight:500;font-size:12px;min-height:40px;padding:9px 13px}
 .primary{background:#ff9b38;color:#150b03;border:1px solid #ff9b38;font-weight:600}.primary:hover{background:#ffad55;border-color:#ffad55}
 .secondary{background:#211509;color:#efc18b;border:1px solid #805321}.secondary:hover{background:#30200e;border-color:#b7782e}
 .quiet,.icon-button{background:transparent;color:#cf9559;border:1px solid transparent}.quiet:hover,.icon-button:hover{background:#26190c;color:#ffaf58;border-color:#573719}.icon-button{padding:9px;min-width:40px}
-.pilot-note{display:flex;gap:12px;padding:12px 32px;align-items:center;background:#2b1b0c;border-bottom:1px solid #704619}
+.sample-note{display:flex;gap:12px;padding:12px 32px;align-items:center;background:#2b1b0c;border-bottom:1px solid #704619}
 .sample-tag{font-size:10px;font-weight:500;letter-spacing:.8px;color:#eea143;white-space:nowrap}
-.pilot-note p{font-size:11px;line-height:1.6;color:#c3a07a;margin:0}.pilot-note p span{color:#a9845c}
+.sample-note p{font-size:11px;line-height:1.6;color:#c3a07a;margin:0}.sample-note p span{color:#a9845c}
 .workspace{max-width:1440px;margin:0 auto;padding:28px 32px}
 .workspace-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;gap:16px}
 .workspace h2{font-size:22px;letter-spacing:-.6px;font-weight:550;color:#eee8df;margin:0 0 8px}
@@ -143,12 +142,12 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .task-sheet>button,[data-slot=dialog-content]>[data-slot=dialog-close]{min-width:44px;min-height:44px;display:grid;place-items:center;opacity:1;color:#c99153;border-radius:4px}[data-slot=dialog-header]{padding-right:44px}
 [data-sonner-toast]{font-family:inherit!important;background:#211509!important;border-color:#97622c!important;color:#eee8df!important}
 @media(min-width:1500px){.task-card{padding:18px}.column{padding:17px}.board{gap:20px}}
-@media(max-width:800px){.topbar{padding:18px 20px;align-items:flex-start}.topactions{gap:4px;flex-wrap:wrap;justify-content:flex-end}.topactions .quiet span{display:none}.topactions .quiet{min-width:44px;min-height:44px;padding:12px}.brand h1{font-size:18px}.pilot-note{padding:12px 20px;align-items:flex-start}.pilot-note p span{display:block}.workspace{padding:25px 20px}.board{gap:12px}.column{padding:10px}.task-card{padding:12px}}
+@media(max-width:800px){.topbar{padding:18px 20px;align-items:flex-start}.topactions{gap:4px;flex-wrap:wrap;justify-content:flex-end}.topactions .quiet span{display:none}.topactions .quiet{min-width:44px;min-height:44px;padding:12px}.brand h1{font-size:18px}.sample-note{padding:12px 20px;align-items:flex-start}.sample-note p span{display:block}.workspace{padding:25px 20px}.board{gap:12px}.column{padding:10px}.task-card{padding:12px}}
 @media(max-width:600px){
  .topbar{padding:16px;gap:12px;flex-wrap:wrap}.brand{gap:9px}.brand h1{font-size:18px}.brand p{font-size:11px;line-height:1.6}.topactions{margin-left:auto;max-width:100%;gap:4px}
  .primary,.secondary,.quiet,.icon-button,.view-tabs button{min-width:44px;min-height:44px;flex-shrink:0}
  .topactions .quiet{padding:12px}.topactions .primary{font-size:12px;padding:10px 12px}
- .pilot-note{padding:11px 16px;gap:9px}.pilot-note p{font-size:11px}.sample-tag{font-size:10px;padding-top:3px}.pilot,.sample-mini{font-size:10px}
+ .sample-note{padding:11px 16px;gap:9px}.sample-note p{font-size:11px}.sample-tag{font-size:10px;padding-top:3px}.sample-mini{font-size:10px}
  .workspace{padding:23px 16px}.workspace h2{font-size:21px}.workspace-heading p{font-size:11px}
  .view-tabs{gap:6px;flex-wrap:wrap}.view-tabs button{font-size:12px;padding:8px 10px;flex:0 0 auto;width:auto;height:auto;min-width:44px;max-width:100%}
  .board,.board.columns-2,.board.columns-1{grid-template-columns:1fr}.column{min-height:125px;padding:12px}.column-heading{padding-bottom:12px}.cards{gap:10px}.task-card{padding:15px}.task-card h4{font-size:15px}.next-action{font-size:13px}.card-top,.card-footer{font-size:11px;line-height:1.6}.card-footer{flex-wrap:wrap;row-gap:7px}
