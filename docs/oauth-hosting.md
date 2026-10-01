@@ -16,6 +16,20 @@ Do the implementation and local synthetic checks first. Account login, OAuth cli
 8. Enter `WORKOS_API_KEY`, `TASK_BOARD_SESSION_SECRET` and `TASK_BOARD_AUTH_POLICY` through the approved private secret handoff. The API key is used only to retrieve users and linked identities from WorkOS. Use the narrowest provider-supported permissions for those endpoints. Generate the session secret as 32 cryptographically random bytes encoded in unpadded base64url (43 characters); keep it stable across replicas and rotate deliberately. Configure the issuer, audience, browser client ID and HTTPS origin from [.dev.vars.example](../.dev.vars.example). Do not store real values in Git or chat.
 9. Use the already-authorized Cloudflare deployment identity to publish this build through the private configuration. Keep `TASK_BOARD_READ_ONLY=true` except while explicitly authorized to create synthetic fixtures or test mutations. No direct R2/public image bucket is allowed. No production switch occurs in this PR.
 
+## Cloudflare CLI scopes and prerequisites
+
+The locked Wrangler 4.92.0 supports this explicit OAuth scope subset for account/user identification, Worker deployment and secrets, and D1 creation:
+
+```sh
+npx wrangler login --scopes account:read user:read workers_scripts:write d1:write
+```
+
+Wrangler adds `offline_access` automatically. Before running login, obtain the owner's explicit approval for these exact scopes, persistent access, target account and operations. These scopes are not restricted to one staging Worker and can grant account-wide capabilities wherever the signed-in identity has access; a configured account ID is not a permission boundary. Omitting `--scopes` requests Wrangler's broad defaults, which must not be inferred as approved. See [Wrangler login](https://developers.cloudflare.com/workers/wrangler/commands/general/#login), [Worker script permissions](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/update/), [Worker secret permissions](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/secrets/methods/update/) and [D1 creation permissions](https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/create/). Current documentation may describe login flags absent from the locked version.
+
+Wrangler 4.92.0 exposes no R2 OAuth scope, and the OAuth mapping needed for bucket creation remains unverified. Do not infer that a broader default scope supplies it. Separately authorize the owner to create the private staging bucket in the Dashboard; the [R2 creation API](https://developers.cloudflare.com/api/resources/r2/subresources/buckets/methods/create/) requires Workers R2 Storage Write. Worker deployment can bind existing D1/R2 resources without separate storage permissions under [granular Worker authorization](https://developers.cloudflare.com/workers/authorization/workers/#bindings).
+
+Use native Worker assets and `routes: []` with the approved Workers subdomain to avoid legacy KV asset storage, route publication and custom-domain permissions. No plan upgrade, purchase or unrelated resource permission is implied by staging setup.
+
 ## Request trust and permissions
 
 Every MCP method, board API action and image request verifies the caller. The Worker strips old `oai-authenticated-user-*` headers and the application never consumes them. Connect tokens use the configured issuer's fixed `/oauth2/jwks`, RS256, exact resource audience, required expiry/issued-at and user subject, client ID and consent ID. Machine credentials and delegated actor tokens are rejected. Invalid Authorization never falls back to browser cookies.
