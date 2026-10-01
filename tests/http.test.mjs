@@ -9,7 +9,7 @@ async function mcp(method,params={},h=headers){const r=await fetch(url+'/mcp',{m
 assert.equal((await rest('list_tasks',{}, {'content-type':'application/json'})).status,401);
 assert.equal((await mcp('tools/call',{name:'list_tasks',arguments:{}},{'content-type':'application/json'})).status,401);
 let discovery=await mcp('tools/list',{}, {'content-type':'application/json'});assert.equal(discovery.status,401);
-discovery=await mcp('tools/list');assert.equal(discovery.status,200);assert.equal(discovery.data.result.tools.length,19,'Primary credentials need an approved custom write scope');
+discovery=await mcp('tools/list');assert.equal(discovery.status,200);assert.equal(discovery.data.result.tools.length,20,'Primary credentials need an approved custom write scope');
 const readDiscovery=await mcp('tools/list',{},readHeaders);assert.equal(readDiscovery.status,200);assert.equal(readDiscovery.data.result.tools.length,9);assert.ok(!readDiscovery.data.result.tools.some(tool=>tool.name==='create_task'));
 assert.equal((await mcp('initialize')).data.result.serverInfo.name,'yet-another-task-board');
 assert.equal((await rest('list_tasks',{}, {...headers,origin:'https://evil.invalid'})).status,403);

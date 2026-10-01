@@ -578,6 +578,100 @@ test('cutover freeze is read-only by default, rejects typos, and still permits o
   await denied(await apiCall('list_tasks',{},browserHeaders),503,'auth_configuration');
 });
 
+test('migration capture requires an explicit source freeze even for an approved read-only owner or prior cursor', async () => {
+  const session = await browserSession();
+  const readHeaders = bearer(await token());
+  const credentials = [readHeaders, { cookie: session.cookie }, bearer(await token({ client_id: 'synthetic-write-client', scope: 'openid tasks:write' }))];
+  globalThis.__authRouteEnv.TASK_BOARD_READ_ONLY = 'true';
+  const started = await apiCall('export_migration_page', { pageSize: 1 }, readHeaders);
+  assert.equal(started.status, 200);
+  const first = await started.json();
+  assert.equal(first.version, 3);
+  assert.ok(first.nextCursor);
+  const keyCount = sqlite.prepare('SELECT COUNT(*) AS n FROM backup_keys').get().n;
+  for (const flag of ['false', undefined]) {
+    if (flag === undefined) delete globalThis.__authRouteEnv.TASK_BOARD_READ_ONLY;
+    else globalThis.__authRouteEnv.TASK_BOARD_READ_ONLY = flag;
+    for (const headers of credentials) {
+      // A missing flag freezes ordinary writes by default, but is not the
+      // explicit migration boundary required for a full-state source capture.
+      assert.equal((await apiCall('list_tasks', {}, headers)).status, 200);
+      for (const args of [{}, { cursor: first.nextCursor }]) {
+        await denied(await apiCall('export_migration_page', args, headers), 409, 'migration_requires_freeze');
+        await denied(await rpcCall('export_migration_page', args, headers), 409, 'migration_requires_freeze');
+      }
+    }
+  }
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM backup_keys').get().n, keyCount);
+});
+
+test('explicitly frozen migration captures remain read-scope operations with browser/API/MCP owner and retry fidelity', async () => {
+  const session = await browserSession();
+  globalThis.__authRouteEnv.TASK_BOARD_READ_ONLY = 'true';
+  const expectedTasks = (await serviceA.list()).map(task => task.id).sort();
+  for (const headers of [
+    bearer(await token()),
+    bearer(await token({ client_id: 'dynamic-unknown-client', scope: 'openid profile email' })),
+    { cookie: session.cookie },
+  ]) {
+    const principal = await getBoardPrincipal(new Request(origin + '/api/board', { headers }));
+    assert.equal(principal.ownerId, ownerA);
+    assert.equal(principal.canWrite, false);
+    const listed = await mcp.POST(rpcRequest('tools/list', null, headers));
+    assert.equal(listed.status, 200);
+    assert.ok((await listed.json()).result.tools.some(tool => tool.name === 'export_migration_page'));
+    const api = await apiCall('export_migration_page', {}, headers);
+    assert.equal(api.status, 200);
+    assert.match(api.headers.get('cache-control'), /no-store/);
+    const pages = [await api.json(), await rpcValue(await rpcCall('export_migration_page', {}, headers))];
+    for (const page of pages) {
+      assert.equal(page.version, 3);
+      assert.equal(page.storageOwner, ownerA);
+      assert.deepEqual(page.tasks.map(task => task.id).sort(), expectedTasks);
+      assert.ok(!page.tasks.some(task => task.id === taskB.id));
+      const original = sqlite.prepare('SELECT request_key,fingerprint FROM attachments WHERE owner=? AND id=?').get(ownerA, attachmentA.id);
+      assert.deepEqual(page.uploadRetries.find(retry => retry.attachmentId === attachmentA.id), { attachmentId: attachmentA.id, requestKey: original.request_key, fingerprint: original.fingerprint });
+    }
+    // A continuation retains the route's freshly authenticated owner rather
+    // than treating the opaque cursor as independent authorization.
+    const continued = await rpcValue(await rpcCall('export_migration_page', { cursor: pages[0].nextCursor }, headers));
+    assert.equal(continued.backupId, pages[0].backupId);
+    assert.equal(continued.ownerTag, pages[0].ownerTag);
+  }
+});
+
+test('migration capture rejects cross-owner cursors, caller-selected owners, forged identities, and revoked grants', async () => {
+  globalThis.__authRouteEnv.TASK_BOARD_READ_ONLY = 'true';
+  const ownerHeaders = bearer(await token());
+  const ownerPage = await apiCall('export_migration_page', { pageSize: 1 }, ownerHeaders);
+  assert.equal(ownerPage.status, 200);
+  const capture = await ownerPage.json();
+  const otherHeaders = {
+    ...bearer(await token({ sub: 'user_synthetic_b', email: 'owner-a@example.com', owner: ownerA })),
+    'x-task-board-owner': ownerA, 'oai-authenticated-user-id': ownerA,
+  };
+  const otherPage = await rpcValue(await rpcCall('export_migration_page', {}, otherHeaders));
+  assert.equal(otherPage.storageOwner, ownerB);
+  assert.deepEqual(otherPage.tasks.map(task => task.id).sort(), (await serviceB.list()).map(task => task.id).sort());
+  assert.equal(otherPage.uploadRetries.length, 0);
+  await denied(await apiCall('export_migration_page', { cursor: capture.nextCursor }, otherHeaders), 400, 'invalid_cursor');
+  const crossed = await rpcCall('export_migration_page', { cursor: capture.nextCursor }, otherHeaders);
+  assert.equal(crossed.status, 200);
+  const crossedMessage = await crossed.json();
+  assert.equal(crossedMessage.result.isError, true);
+  assert.equal(JSON.parse(crossedMessage.result.content[0].text).error, 'invalid_cursor');
+  await denied(await apiCall('export_migration_page', { owner: ownerA }, otherHeaders), 400, 'invalid_input');
+  const selected = await rpcCall('export_migration_page', { owner: ownerA }, otherHeaders);
+  const selectedMessage = await selected.json();
+  assert.equal(selectedMessage.result.isError, true);
+  assert.equal(JSON.parse(selectedMessage.result.content[0].text).error, 'invalid_input');
+  await denied(await apiCall('export_migration_page', {}, { 'oai-authenticated-user-id': ownerA }), 401, 'sign_in_required');
+  await denied(await rpcCall('export_migration_page', {}, bearer(await token({ sub: 'user_unapproved', email: 'owner-a@example.com', owner: ownerA }))), 403, 'identity_not_allowed');
+  globalThis.__authRouteEnv.TASK_BOARD_AUTH_POLICY = JSON.stringify({ ...policy, owners: policy.owners.filter(owner => owner.ownerId !== ownerA) });
+  await denied(await apiCall('export_migration_page', { cursor: capture.nextCursor }, ownerHeaders), 403, 'identity_not_allowed');
+  await denied(await rpcCall('export_migration_page', { cursor: capture.nextCursor }, ownerHeaders), 403, 'identity_not_allowed');
+});
+
 test('browser cookies are bound to the configured origin even on alternate Worker hostnames', async () => {
   const session = await browserSession();
   const alternate = new Request('https://alternate.example/api/board',{method:'POST',headers:{cookie:session.cookie,origin:'https://alternate.example','content-type':'application/json'},body:JSON.stringify({name:'list_tasks',args:{}})});

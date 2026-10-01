@@ -109,17 +109,20 @@ async function responsePage(response, maxBytes) {
   catch { fail('invalid_backup'); }
 }
 
-async function checkPage(page, pages) {
+async function checkPage(page, pages, version) {
   const manifest = pages[0] ?? page;
-  if (!page || page.format !== 'task-board-backup-page' || page.version !== 2 || page.sequence !== pages.length || page.previousChecksum !== (pages.at(-1)?.checksum ?? null) || page.backupId !== manifest.backupId || page.capturedAt !== manifest.capturedAt || !/^[a-f0-9]{64}$/.test(page.checksum) || typeof page.complete !== 'boolean') fail('invalid_backup');
+  if (!page || page.format !== 'task-board-backup-page' || page.version !== version || page.sequence !== pages.length || page.previousChecksum !== (pages.at(-1)?.checksum ?? null) || page.backupId !== manifest.backupId || page.capturedAt !== manifest.capturedAt || !/^[a-f0-9]{64}$/.test(page.checksum) || typeof page.complete !== 'boolean') fail('invalid_backup');
   if (!pages.length && (page.pageKind !== 'manifest' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(page.backupId) || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(page.capturedAt) || !Number.isFinite(Date.parse(page.capturedAt)))) fail('invalid_backup');
   if (page.complete ? page.nextCursor !== null : typeof page.nextCursor !== 'string' || !page.nextCursor || page.nextCursor.length > 300000) fail('invalid_backup');
   const {checksum, nextCursor, ...body} = page;
   if (await hash(stable(body)) !== checksum) fail('invalid_backup');
 }
 
-/** Save only a complete validated v2 capture; never overwrite an earlier snapshot. */
+/** Save only a complete validated capture; never overwrite an earlier snapshot. */
 export async function backupLocal(options) {
+  const mode = options.mode ?? 'backup';
+  if (mode !== 'backup' && mode !== 'migration') fail('configuration');
+  const version = mode === 'migration' ? 3 : 2;
   const url = endpoint(options.origin, options.allowHttpLoopback === true);
   const pageSize = integer(options.pageSize, 20, 1, 100);
   const maxPages = integer(options.maxPages, 100000, 1, 1000000);
@@ -144,7 +147,7 @@ export async function backupLocal(options) {
         response = await fetch(url, {
           method: 'POST', redirect: 'manual', credentials: 'omit',
           headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
-          body: JSON.stringify({name: 'export_backup_page', args: {pageSize, ...(cursor === null ? {} : {cursor})}}),
+          body: JSON.stringify({name: mode === 'migration' ? 'export_migration_page' : 'export_backup_page', args: {pageSize, ...(cursor === null ? {} : {cursor})}}),
           signal: AbortSignal.timeout(timeoutMs),
         });
       } catch { fail('request'); }
@@ -157,7 +160,7 @@ export async function backupLocal(options) {
       catch (error) { if (error instanceof BackupLocalError) throw error; fail('request'); }
       totalBytes += downloaded.size;
       if (totalBytes > maxTotalBytes) fail('limit');
-      await checkPage(downloaded.page, pages);
+      await checkPage(downloaded.page, pages, version);
       pages.push(downloaded.page);
       cursor = downloaded.page.nextCursor;
       if (cursor !== null) { if (cursors.has(cursor)) fail('invalid_backup'); cursors.add(cursor); }
@@ -179,7 +182,7 @@ export async function backupLocal(options) {
     const filename = path.join(destination.filename, `task-board-backup-${pages[0].capturedAt.replaceAll(':', '-')}-${pages[0].backupId}.json`);
     temporary = path.join(destination.filename, `.backup-${randomUUID()}.partial`);
     const file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-    try { await file.chmod(0o600); await file.writeFile(JSON.stringify({format: 'task-board-local-backup', version: 2, pages})); await file.sync(); }
+    try { await file.chmod(0o600); await file.writeFile(JSON.stringify({format: 'task-board-local-backup', version, pages})); await file.sync(); }
     finally { await file.close(); }
     // A hard link publishes atomically with no replacement (unlike rename).
     await link(temporary, filename);
@@ -200,6 +203,7 @@ export async function backupLocal(options) {
 
 export function backupOptionsFromEnvironment(env = process.env) {
   return {
+    mode: env.TASK_BOARD_BACKUP_MODE || 'backup',
     origin: env.TASK_BOARD_BACKUP_ORIGIN, destination: env.TASK_BOARD_BACKUP_DIRECTORY,
     token: env.TASK_BOARD_BACKUP_TOKEN, tokenFile: env.TASK_BOARD_BACKUP_TOKEN_FILE,
     pageSize: env.TASK_BOARD_BACKUP_PAGE_SIZE, maxPages: env.TASK_BOARD_BACKUP_MAX_PAGES,

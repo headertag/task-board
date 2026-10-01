@@ -1,4 +1,4 @@
-import { getBoardPrincipal, authFailure } from '../../authentication';
+import { getBoardPrincipal, authFailure, requireMigrationFreeze } from '../../authentication';
 import { AuthError, requirePermission, type AuthPrincipal } from '../../../lib/auth';
 import { database, imageStorage } from '../../../lib/db';
 import { BoardService, AppError } from '../../../lib/service';
@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 
 const readActions = new Set([
   'get_comment', 'list_comments', 'list_tasks', 'get_task', 'export_tasks',
-  'export_backup_page', 'preview_import', 'list_snapshots', 'get_snapshot',
+  'export_backup_page', 'export_migration_page', 'preview_import', 'list_snapshots', 'get_snapshot',
 ]);
 const writeActions = new Set([
   'add_comment', 'edit_comment', 'archive_comment', 'restore_comment',
@@ -41,6 +41,7 @@ export async function POST(request: Request) {
     if (!readActions.has(input.name) && !writeActions.has(input.name)) throw new AppError(404, 'unknown_action', 'Unknown task action');
     const permission = writeActions.has(input.name) ? 'write' : 'read';
     requirePermission(principal, permission);
+    if (input.name === 'export_migration_page') requireMigrationFreeze();
     if (permission === 'write' && principal.kind === 'browser' && request.headers.get('origin') !== new URL(request.url).origin) {
       throw new AuthError(403, 'origin_mismatch', 'Request origin is not allowed');
     }

@@ -1,4 +1,4 @@
-import { getBoardPrincipal, authFailure } from '../authentication';
+import { getBoardPrincipal, authFailure, requireMigrationFreeze } from '../authentication';
 import { AuthError, requirePermission, type AuthPrincipal } from '../../lib/auth';
 import { database, imageStorage } from '../../lib/db';
 import { BoardService } from '../../lib/service';
@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 // These names are application permissions. MCP annotations are only client hints.
 const readTools = new Set([
   'get_comment', 'list_comments', 'list_tasks', 'get_task', 'export_tasks',
-  'export_backup_page', 'preview_import', 'list_snapshots', 'get_snapshot',
+  'export_backup_page', 'export_migration_page', 'preview_import', 'list_snapshots', 'get_snapshot',
 ]);
 const writeTools = new Set([
   'add_comment', 'edit_comment', 'archive_comment', 'restore_comment',
@@ -61,6 +61,7 @@ export async function POST(request: Request) {
   try {
     const permission = writeTools.has(name) ? 'write' : 'read';
     requirePermission(principal, permission);
+    if (name === 'export_migration_page') requireMigrationFreeze();
     if (permission === 'write') requireWriteOrigin(request, principal);
   } catch (error) { return authFailure(request, error); }
   try {

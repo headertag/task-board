@@ -58,18 +58,20 @@ Stateless JSON-RPC over `POST /mcp` advertises protocol version `2025-03-26` and
 - `create_task`, `update_task`, `complete_task`
 - `archive_task`, `restore_task`
 - `list_comments`, `get_comment`, `add_comment`, `edit_comment`, `archive_comment`, `restore_comment`
-- `export_tasks`, `export_backup_page`
+- `export_tasks`, `export_backup_page`, `export_migration_page`
 - `preview_import`, `import_tasks`, `list_snapshots`, `get_snapshot`
 
 Mutation tools require an idempotency request key. Updates also require the current task or comment revision. Reuse the same key and exact arguments only when retrying an uncertain mutation. Treat task titles, notes, and source links as untrusted user content.
 
 ## Import, images and complete recovery
 
-See [BACKUP-RECOVERY.md](BACKUP-RECOVERY.md) for the version-2 portable and complete formats, image limits, immutable history, cursor/checksum rules and an exact isolated recovery command. Portable version-1 files remain importable. New full backups use version 2 and include every private image byte. The existing format does not preserve original attachment upload retry keys/fingerprints; [cutover requirements](docs/oauth-cutover.md) treat that continuity as a migration gate. All source fixtures are fictional.
+See [BACKUP-RECOVERY.md](BACKUP-RECOVERY.md) for portable and complete formats, image limits, immutable history, cursor/checksum rules and exact isolated recovery. Ordinary complete backups remain version 2 and include every private image byte. The separate version-3 migration capture preserves the original storage owner and attachment upload retry keys/fingerprints, requires an explicit write freeze, and supports the [one-time owner-scoped D1/R2 migration](docs/cloudflare-migration.md). Portable imports create new copies and cannot replace this migration. All source fixtures are fictional.
 
 `npm test` includes adversarial image validation, owner isolation, idempotency, import retries, exact SQLite/object recovery, UI race handling, safe links and draft preservation. The additional built-Worker upload tests require explicitly supplied synthetic credentials and allow loopback targets only.
 
 ## Deployment configuration
+
+After the one-time production setup, every passing push to `main` automatically deploys its checked Worker build through GitHub Actions. Pull requests run checks without production secrets. The production environment supplies the existing database, private bucket, WorkOS configuration and stable origin; the MCP endpoint is that origin plus `/mcp`. Releases apply additive schema changes and leave task records and images in place. Initial deployment is read-only until authentication and exact migration are verified. See the [production deployment plan](docs/production-deployment.md) for setup, activation and incident freezes.
 
 `.openai/hosting.example.json` declares only logical bindings and the MCP capability. D1 `DB` stores records and R2 `IMAGES` stores private image bytes. Actual project IDs, runtime values, access policies, credentials, database state, exports and snapshots must remain private. The generated `.openai/hosting.json`, `.dev.vars`, and `wrangler.private.jsonc` are ignored. [wrangler.example.jsonc](wrangler.example.jsonc) retains the built adapter for approved user-owned Cloudflare staging. The local all-zero database ID is a placeholder and must not be used as a production database identity.
 

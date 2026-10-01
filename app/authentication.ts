@@ -6,6 +6,9 @@ import { browserPrincipal, readBrowserConfig, cookie, SESSION_COOKIE, type Brows
 import { safeError } from '../lib/operations';
 
 export const authBindings = () => env as unknown as AuthBindings & BrowserBindings;
+export function requireMigrationFreeze() {
+  if (env.TASK_BOARD_READ_ONLY !== 'true') throw new AuthError(409, 'migration_requires_freeze', 'Freeze board writes before capturing a migration backup');
+}
 export function browserConfig() { const bindings = authBindings(); return readBrowserConfig(bindings, readAuthConfig(bindings)); }
 export async function getBoardPrincipal(request?: Request) {
   const requestHeaders = request?.headers || await headers();
