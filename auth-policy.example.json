@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "owners": [
+    {
+      "ownerId": "synthetic-existing-storage-owner",
+      "identities": [
+        { "provider": "google", "email": "owner@example.com", "providerId": "synthetic-google-subject", "workosUserId": "user_synthetic_google" },
+        { "provider": "github", "providerId": "123456789", "workosUserId": "user_synthetic_github" }
+      ]
+    }
+  ],
+  "clients": [
+    { "clientId": "client_synthetic_external_agent", "access": "read" }
+  ]
+}

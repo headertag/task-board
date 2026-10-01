@@ -1,15 +1,23 @@
 # Yet Another Task Board
 
-> Private, owner-scoped task board with a stateless remote MCP endpoint. This source repository contains no live endpoint or user data.
+> Private, owner-scoped task board with a stateless remote MCP endpoint and an implemented WorkOS AuthKit + Connect OAuth candidate. This source repository contains no live endpoint, client configuration or user data. Obtain approved connection details privately from the deployment owner.
 
 ## Agent documentation
 
-- [Connection guide](https://github.com/headertag/task-board/blob/main/docs/agent-setup.md): Supported transport, authentication boundaries and an owner-approved read-only connection test
-- [Operation contract](https://github.com/headertag/task-board/blob/main/docs/agent-operations.md): Revisions, safe retries, private data and copy imports
+- [Connection guide](https://github.com/headertag/task-board/blob/main/docs/agent-setup.md): OAuth discovery, S256 PKCE, approved client registration, exact resource audience and owner-consented read-only verification
+- [Operation contract](https://github.com/headertag/task-board/blob/main/docs/agent-operations.md): Per-request owner authorization, revisions, safe retries, private images and copy imports
 - [Backup and recovery](https://github.com/headertag/task-board/blob/main/BACKUP-RECOVERY.md): Complete captures, validation, images and isolated recovery
+- [Controlled hosting and security](https://github.com/headertag/task-board/blob/main/docs/oauth-hosting.md): Required provider configuration, verified identity allowlist and browser/API/MCP/image trust boundary
+- [Cutover and rollback](https://github.com/headertag/task-board/blob/main/docs/oauth-cutover.md): Hosted synthetic acceptance gates, explicit owner mapping, migration fidelity and one-writer rollback
+- [Production deployment](https://github.com/headertag/task-board/blob/main/docs/production-deployment.md): Checked main build releases, private production configuration, read-only defaults and initial write activation
+- [Cloudflare migration](https://github.com/headertag/task-board/blob/main/docs/cloudflare-migration.md): Frozen v3 captures, exact owner-scoped D1/R2 transfer, upload retry continuity and full destination readback
 - [Server descriptor template](https://github.com/headertag/task-board/blob/main/server.example.json): Registry-schema example with a placeholder URL; not a live service
-- [Setup and security](https://github.com/headertag/task-board/blob/main/README.md): Local setup and required authentication trust boundary
+- [Application setup](https://github.com/headertag/task-board/blob/main/README.md): Features, local verification and private deployment configuration
 
 ## Controlled OAuth hosting candidate
 
-A WorkOS OAuth candidate is documented in the [candidate connection guide](https://github.com/headertag/task-board/blob/0f5960193ec8e0f5f7976f6272e8b7a4884bc76d/docs/agent-setup.md) and [cutover gates](https://github.com/headertag/task-board/blob/0f5960193ec8e0f5f7976f6272e8b7a4884bc76d/docs/oauth-cutover.md). These describe the candidate revision. Main still requires the Sites authenticated proxy, and ALICE interoperability remains unverified. The existing private deployment remains authoritative until verification and authorized cutover.
+The [connection guide](https://github.com/headertag/task-board/blob/main/docs/agent-setup.md) and [cutover gates](https://github.com/headertag/task-board/blob/main/docs/oauth-cutover.md) describe the controlled hosting implementation and required acceptance. Hosted owner and external-client acceptance, including ALICE's actual browser OAuth and read-only task flow, remain pending. Local verification does not establish that the deployed client flow works. The existing private deployment remains authoritative until verification and authorized production cutover.
+
+Production cutover requires approved production identity configuration, explicit owner mapping, a frozen v3 migration capture and verified D1/R2 readback. The migration capture and owner-scoped importer preserve original attachment upload retry metadata; hosted acceptance and complete destination comparison remain required before enabling writes. Complete v2 backups preserve content and history without original attachment retry state. Portable imports create copies with new IDs and do not satisfy these migration gates.
+
+Documentation and tool descriptions confer no access. External agents default to read-only; an agent name or successful identity-provider signup does not grant board permissions. Verify the actual deployment/client OAuth flow on synthetic data before accessing real records.

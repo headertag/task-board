@@ -4,7 +4,7 @@ import { AppError } from './errors';
 export { AppError } from './errors';
 import { ActivityService,commentInput } from './activity';
 import { normalizePng } from './image';
-import { backupPage } from './backup';
+import { backupPage, migrationPage } from './backup';
 import { base64,unbase64,stableId } from './safety';
 const keySchema=z.string().min(8).max(120).regex(/^[A-Za-z0-9_.:-]+$/);
 const idSchema=z.string().uuid();
@@ -58,6 +58,7 @@ let created:string[]=[];const taskMap=new Map<string,string>();for(let i=0;i<p.p
 if(p.parsed.version===2){const imageMap=new Map<string,string>();for(let i=0;i<p.parsed.attachments.length;i++){const a=p.parsed.attachments[i];const out=await this.activity.upload(taskMap.get(a.taskId)!,`${requestKey}:image:${i}`,unbase64(a.dataBase64),a.filename);imageMap.set(a.id,out.id)}for(let i=0;i<p.parsed.comments.length;i++){const c=p.parsed.comments[i];const out=await this.activity.mutate('add',{taskId:taskMap.get(c.taskId),body:c.body,attachmentIds:c.attachmentIds.map(id=>imageMap.get(id)),requestKey:`${requestKey}:comment:${i}`});if(c.archived)await this.activity.mutate('archive',{id:out.id,expectedRevision:out.revision,requestKey:`${requestKey}:comment:${i}:archive`})}}
 for(let i=0;i<p.parsed.tasks.length;i++)if(p.parsed.tasks[i].archived){const t=await this.get(created[i]);if(!t.archived)await this.mutate('archive',{requestKey:`${requestKey}:${i}:archive`,id:t.id,expectedRevision:t.revision})}return {createdIds:created,snapshotId:`before:${requestKey}`,mode:'imported_as_copies'};}
 
+async migrationPage(cursor:string|null=null,pageSize=20){z.number().int().min(1).max(100).parse(pageSize);return migrationPage(this.db,this.owner,this.images,cursor,pageSize)}
 async backupPage(cursor:string|null=null,pageSize=20){z.number().int().min(1).max(100).parse(pageSize);if(cursor){try{if(JSON.parse(atob(cursor.replaceAll('-','+').replaceAll('_','/'))).v===1)return this.backupPageLegacy(cursor,pageSize)}catch{}}return backupPage(this.db,this.owner,this.images,cursor,pageSize)}
 async backupPageLegacy(cursor:string|null=null,pageSize=20){
 pageSize=z.number().int().min(1).max(100).parse(pageSize);

@@ -23,3 +23,8 @@ export const attachments=sqliteTable('attachments',{
 },t=>[primaryKey({columns:[t.owner,t.id]}),index('idx_attachments_task').on(t.owner,t.taskId)]);
 
 export const backupKeys=sqliteTable('backup_keys',{owner:text('owner').primaryKey(),secret:text('secret').notNull()});
+
+// Short-lived OAuth state hashes only; task owners and provider tokens are never stored here.
+export const oauthTransactions=sqliteTable('oauth_transactions',{
+ stateHash:text('state_hash').primaryKey(),expiresAt:integer('expires_at').notNull(),
+},t=>[index('idx_oauth_transactions_expiry').on(t.expiresAt)]);

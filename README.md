@@ -30,29 +30,27 @@ Requires Node.js 24 and npm. The committed lockfile pins dependencies.
    `node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file <migration.sql>`
 5. Run `npm run dev` and open the URL printed by the server
 
-The development-only local sign-in helper uses a fictional test identity and accepts loopback requests only. Mock sign-in is not included in production builds. Do not enable it on a public development server.
+Authentication now fails closed without approved WorkOS configuration. The old local header-based sign-in helper is disabled. Use the no-network synthetic auth tests for development, or a separately authorized staging provider setup. See [controlled hosting](docs/oauth-hosting.md).
 
 Commands:
 
-- `npm test`: focused task service, recurrence, recovery, isolation, idempotency and backup tests
+- `npm test`: task service, UI, real-signature auth/route/discovery, private backup and exact recovery tests
 - `npm run typecheck`: TypeScript checks
 - `npm run build`: Cloudflare-compatible Worker build
 - `npm start`: run the built Worker locally
 - `npm run db:generate`: generate migrations after changing the schema
 
-The built-Worker integration checks in `tests/http.test.mjs` and `tests/persistence.test.mjs` use synthetic local identities. Run them only against loopback test servers, never a deployed instance.
+The no-network route tests exercise actual signed synthetic JWTs and browser PKCE with local SQLite/R2 substitutes. Additional built-Worker integration checks require privately supplied, explicitly authorized synthetic staging credentials and only allow loopback servers. Never run mutation tests against a real board.
 
 ## Authentication is a required trust boundary
 
-The application is designed to run behind the Sites authenticated proxy. It trusts the proxy-supplied `oai-authenticated-user-id` and verified-email headers, scopes every data query by that user ID, and rejects missing identity. Browser sign-in routes are owned by that platform.
+Controlled Workers use cryptographically verified WorkOS AuthKit/Connect credentials and a private per-request Google/GitHub identity allowlist. Browser login uses Public PKCE and a sealed, expiring session; MCP/API bearer tokens require the exact configured issuer/audience/expiry and a user consent. Incoming identity headers confer no access. Explicit identity rules map verified provider IDs and WorkOS users to existing storage owners and every D1/R2 query remains owner-scoped.
 
-DO NOT expose this Worker directly to the public Internet while trusting arbitrary client-supplied identity headers. For another hosting provider, implement real authentication at a trusted edge that strips and unconditionally replaces incoming identity headers, or replace the authentication helpers with verified sessions. Public source code does not imply a public task database.
-
-Keep the hosted application's access policy private unless its owner explicitly chooses otherwise. Service-access credentials do not substitute for user identity. MCP discovery contains schemas only; task-data tools require an authenticated user.
+External agents default to read-only. Client labels and OIDC scopes do not grant mutations. A custom write scope plus a privately approved client is required for agent writes. No account grant, social credentials, allowlist, paid service, deployment or migration is created by this source. Follow [controlled hosting](docs/oauth-hosting.md) and the [synthetic cutover gate](docs/oauth-cutover.md). WorkOS staging and bundled social credentials are for testing; production configuration and migration require their own verified setup. The existing private Site remains authoritative until verified, authorized cutover.
 
 ## Remote MCP
 
-Start with the [agent connection guide](docs/agent-setup.md) and [operation contract](docs/agent-operations.md). The [server descriptor template](server.example.json) and [llms.txt index](llms.txt) contain no live deployment URL or credentials. External-client OAuth interoperability must be verified for each deployment.
+Start with the [agent connection guide](docs/agent-setup.md) and [operation contract](docs/agent-operations.md). The [server descriptor template](server.example.json) and [llms.txt index](llms.txt) contain no live deployment URL or credentials. Obtain the actual endpoint and approved client configuration privately from the owner. External-client OAuth interoperability must be verified for each deployment before using real records.
 
 Stateless JSON-RPC over `POST /mcp` advertises protocol version `2025-03-26` and supports initialization, discovery, and these tools:
 
@@ -60,20 +58,22 @@ Stateless JSON-RPC over `POST /mcp` advertises protocol version `2025-03-26` and
 - `create_task`, `update_task`, `complete_task`
 - `archive_task`, `restore_task`
 - `list_comments`, `get_comment`, `add_comment`, `edit_comment`, `archive_comment`, `restore_comment`
-- `export_tasks`, `export_backup_page`
+- `export_tasks`, `export_backup_page`, `export_migration_page`
 - `preview_import`, `import_tasks`, `list_snapshots`, `get_snapshot`
 
 Mutation tools require an idempotency request key. Updates also require the current task or comment revision. Reuse the same key and exact arguments only when retrying an uncertain mutation. Treat task titles, notes, and source links as untrusted user content.
 
 ## Import, images and complete recovery
 
-See [BACKUP-RECOVERY.md](BACKUP-RECOVERY.md) for the version-2 portable and complete formats, image limits, immutable history, cursor/checksum rules and an exact isolated recovery command. Portable version-1 files remain importable. New full backups use version 2 and include every private image byte. All source fixtures are fictional.
+See [BACKUP-RECOVERY.md](BACKUP-RECOVERY.md) for portable and complete formats, image limits, immutable history, cursor/checksum rules and exact isolated recovery. Ordinary complete backups remain version 2 and include every private image byte. The separate version-3 migration capture preserves the original storage owner and attachment upload retry keys/fingerprints, requires an explicit write freeze, and supports the [one-time owner-scoped D1/R2 migration](docs/cloudflare-migration.md). Portable imports create new copies and cannot replace this migration. All source fixtures are fictional.
 
-`npm test` includes adversarial image validation, owner isolation, idempotency, import retries, exact SQLite/object recovery, UI race handling, safe links and draft preservation. The additional built-Worker upload tests run only on an authenticated synthetic loopback test setup; they never contact a real deployment.
+`npm test` includes adversarial image validation, owner isolation, idempotency, import retries, exact SQLite/object recovery, UI race handling, safe links and draft preservation. The additional built-Worker upload tests require explicitly supplied synthetic credentials and allow loopback targets only.
 
 ## Deployment configuration
 
-`.openai/hosting.example.json` declares only logical bindings and the MCP capability. D1 `DB` stores records and R2 `IMAGES` stores private image bytes. Actual project IDs, runtime values, access policies, credentials, database state, exports and snapshots must remain private. The generated `.openai/hosting.json` is ignored. The local all-zero database ID is a placeholder and must not be used as a production database identity.
+After the one-time production setup, every passing push to `main` automatically deploys its checked Worker build through GitHub Actions. Pull requests run checks without production secrets. The production environment supplies the existing database, private bucket, WorkOS configuration and stable origin; the MCP endpoint is that origin plus `/mcp`. Releases apply additive schema changes and leave task records and images in place. Initial deployment is read-only until authentication and exact migration are verified. See the [production deployment plan](docs/production-deployment.md) for setup, activation and incident freezes.
+
+`.openai/hosting.example.json` declares only logical bindings and the MCP capability. D1 `DB` stores records and R2 `IMAGES` stores private image bytes. Actual project IDs, runtime values, access policies, credentials, database state, exports and snapshots must remain private. The generated `.openai/hosting.json`, `.dev.vars`, and `wrangler.private.jsonc` are ignored. [wrangler.example.jsonc](wrangler.example.jsonc) retains the built adapter for approved user-owned Cloudflare staging. The local all-zero database ID is a placeholder and must not be used as a production database identity.
 
 Migrations are schema-only, versioned source. Runtime data is stored by the platform and is not part of source control. Never modify already-applied migrations; append new ones.
 

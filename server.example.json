@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.headertag/task-board",
   "title": "Yet Another Task Board",
-  "description": "Private task board with durable history, comments, images and portable backups.",
-  "version": "1.1.0",
+  "description": "OAuth-protected task board. Read-only agents by default; private tasks, images and portable backups.",
+  "version": "1.2.0",
   "repository": {
     "url": "https://github.com/headertag/task-board",
     "source": "github"

@@ -15,6 +15,13 @@
       "when": 1790810754960,
       "tag": "0001_zippy_madame_web",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790855623745,
+      "tag": "0002_silky_steve_rogers",
+      "breakpoints": true
     }
   ]
 }
