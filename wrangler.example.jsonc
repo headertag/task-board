@@ -1,0 +1,21 @@
+{
+  // Copy to ignored wrangler.private.jsonc; fill bindings only after owner approval.
+  "name": "task-board-staging-example",
+  "main": "dist/server/index.js",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "no_bundle": true,
+  "rules": [{ "type": "ESModule", "globs": ["**/*.js", "**/*.mjs"] }],
+  "assets": { "directory": "dist/client" },
+  "d1_databases": [{ "binding": "DB", "database_name": "replace-privately", "database_id": "00000000-0000-4000-8000-000000000000", "migrations_dir": "drizzle" }],
+  "r2_buckets": [{ "binding": "IMAGES", "bucket_name": "replace-privately" }],
+  "vars": {
+    "WORKOS_AUTHKIT_ISSUER": "https://your-environment.authkit.app",
+    "WORKOS_MCP_AUDIENCE": "https://task-board.example.com/mcp",
+    "TASK_BOARD_ORIGIN": "https://task-board.example.com",
+    "WORKOS_BROWSER_CLIENT_ID": "client_replace_privately",
+    "TASK_BOARD_READ_ONLY": "true"
+  }
+  // WORKOS_API_KEY, TASK_BOARD_SESSION_SECRET, TASK_BOARD_AUTH_POLICY are private
+  // secrets installed through an approved owner handoff; never put them in vars/Git.
+}

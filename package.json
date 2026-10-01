@@ -11,8 +11,10 @@
     "build": "node --import ./scripts/sites-env.mjs ./node_modules/vinext/dist/cli.js build",
     "start": "node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js dev --config dist/server/wrangler.json --local --persist-to .wrangler/state --ip 127.0.0.1 --inspector-port 0",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-transform-types --import ./tests/loader.mjs tests/service.test.mjs && node --experimental-transform-types --import ./tests/loader.mjs tests/activity.test.mjs && node --import tsx tests/details.test.tsx",
-    "db:generate": "drizzle-kit generate"
+    "test": "node --experimental-transform-types --import ./tests/loader.mjs tests/service.test.mjs && node --experimental-transform-types --import ./tests/loader.mjs tests/activity.test.mjs && node --import tsx tests/details.test.tsx && npm run test:auth && npm run test:backup",
+    "db:generate": "drizzle-kit generate",
+    "test:auth": "node --experimental-transform-types --import ./tests/loader.mjs tests/auth.test.mjs && node --experimental-transform-types --import ./tests/loader.mjs tests/oauth-metadata.test.mjs && node --experimental-transform-types --import ./tests/auth-route-loader.mjs tests/auth-routes.test.mjs",
+    "test:backup": "node --experimental-transform-types --import ./tests/loader.mjs tests/backup-local.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -25,6 +27,7 @@
     "drizzle-orm": "0.45.2",
     "embla-carousel-react": "^8.6.0",
     "input-otp": "^1.4.2",
+    "jose": "6.2.1",
     "lucide-react": "^1.31.0",
     "next": "16.3.4",
     "next-themes": "^0.4.6",

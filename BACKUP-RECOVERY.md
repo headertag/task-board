@@ -9,6 +9,75 @@ Task data, images and backup files are private. Keep them outside source control
 
 Use `export_backup_page` for new captures. Pages contain `sequence`, `previousChecksum`, `checksum`, a stable `backupId`, and first-page counts. Image bytes are delivered in 64 KiB parts. An error or missing page means the backup is incomplete. Cursor HMACs are owner-specific; every database and blob read requires the authenticated owner. Internal signing keys are not user data and are regenerated in a recovered installation.
 
+## Private local capture
+
+`scripts/backup-local.mjs` downloads every v2 page through the authenticated `/api/board` operation, then uses the same complete-backup validator as offline recovery. It checks page order, checksum chaining, manifest counts, task/comment revision chains, relationships, image parts, full image hashes and PNG dimensions. It includes Trash, removed comments, snapshots and retained unattached image uploads. It publishes no file until the entire capture validates.
+
+Use an existing owner-only directory outside every source checkout and web-served/public directory. The script rejects group/other permissions, a different filesystem owner, symbolic links in any path component, Git checkout paths and common public/build roots. It does not create the destination or change existing permissions. The published JSON uses mode `0600`; directories must use `0700`. Keep the directory on a private local filesystem that supports hard links and filesystem synchronization. Public shares and automatically published or cloud-synchronized directories are unsuitable even when their local permissions look private.
+
+The examples below are placeholders. Creating a credential, granting a client access, selecting a real backup destination, and enabling a schedule require the owner's authorization. The source contains no real account, origin, token or backup location.
+
+```sh
+TASK_BOARD_BACKUP_ORIGIN=https://board.example.invalid \
+TASK_BOARD_BACKUP_DIRECTORY=/home/example/.local/state/task-board/backups \
+TASK_BOARD_BACKUP_TOKEN_FILE=/home/example/.local/state/task-board/access-token \
+node --experimental-transform-types --import ./tests/loader.mjs scripts/backup-local.mjs
+```
+
+The credential file contains only an already authorized bearer access token, with an optional final newline. It must be a regular owner-only file (`0600` or `0400`), outside source/public directories, with no symlink components. Alternatively, supply `TASK_BOARD_BACKUP_TOKEN` through a private environment; do not set both credential sources. Never put a token in command-line arguments, a URL, source control or scheduler logs. This command does not register an OAuth client, request a new grant, refresh credentials, or create a service account. An expired, revoked or newly disallowed identity fails closed, so an authorized credential renewal procedure is required before unattended use can be considered operational.
+
+Only HTTPS origins are accepted. The script refuses all redirects, including redirects to the same origin, so its authorization header never follows a redirect. Cookies, caller-provided identity headers and URL credentials are not used. `TASK_BOARD_BACKUP_ALLOW_LOOPBACK=1` permits HTTP solely on loopback for fictional local tests; it never permits HTTP to a remote host.
+
+Each run takes `.backup-local.lock` before downloading. Overlap exits with status `75` and leaves the active capture alone. A crash can leave a lock: confirm that its recorded process has ended and that no scheduler run is active before removing it. Locks are never automatically stolen. Successful output is a new `task-board-backup-<capture-time>-<backup-id>.json` snapshot; atomic publication never replaces an existing filename or follows an output symlink. Failed downloads and validation errors leave earlier snapshots intact. A crash can leave a private `.partial` file, which is not a complete backup. Keep the last known verified snapshot until a new capture and recovery rehearsal have passed. The CLI logs only a fixed success or failure message, never response bodies, tokens, cursors, record text, private origins or filenames.
+
+Optional safety limits are `TASK_BOARD_BACKUP_PAGE_SIZE` (default `20`, maximum `100`), `TASK_BOARD_BACKUP_TIMEOUT_MS` (per request; default `30000`), `TASK_BOARD_BACKUP_MAX_PAGES` (default `100000`), `TASK_BOARD_BACKUP_MAX_PAGE_BYTES` (default `16777216`) and `TASK_BOARD_BACKUP_MAX_TOTAL_BYTES` (default `536870912`). Exceeding a limit fails the capture; it never produces a truncated successful backup. Validation holds the complete chain and image bytes in memory. Review resource limits for very large histories before raising these bounds.
+
+### Scheduling example, not installed
+
+An owner-reviewed systemd user timer can run this command against a private local path. Store the following environment settings in a private `0600` file, for example `/home/example/.config/task-board/backup.env`; the token itself belongs in the separate private token file:
+
+```ini
+TASK_BOARD_BACKUP_ORIGIN=https://board.example.invalid
+TASK_BOARD_BACKUP_DIRECTORY=/home/example/.local/state/task-board/backups
+TASK_BOARD_BACKUP_TOKEN_FILE=/home/example/.local/state/task-board/access-token
+```
+
+Example `task-board-backup.service`:
+
+```ini
+[Unit]
+Description=Verified private task board backup
+
+[Service]
+Type=oneshot
+WorkingDirectory=/path/to/task-board
+EnvironmentFile=/home/example/.config/task-board/backup.env
+ExecStart=/path/to/node --experimental-transform-types --import /path/to/task-board/tests/loader.mjs /path/to/task-board/scripts/backup-local.mjs
+UMask=0077
+NoNewPrivileges=true
+```
+
+Example `task-board-backup.timer`:
+
+```ini
+[Unit]
+Description=Daily private task board backup
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+Persistent=true
+Unit=task-board-backup.service
+
+[Install]
+WantedBy=timers.target
+```
+
+Review the actual owner, paths, cadence, credential-renewal plan, retention and failure reporting before installing or enabling these units. A timer file or a successful synthetic test alone does not establish a working production backup schedule. The script never purges snapshots; any retention/deletion policy needs separate approval. Run the fictional local-server verification with:
+
+```sh
+node --experimental-transform-types --import ./tests/loader.mjs --test tests/backup-local.test.mjs
+```
+
 ## Exact isolated recovery
 
 Requires Node 22.13+ with built-in SQLite and the source dependencies installed. First make a copy of the backup and keep the original untouched. Run from the project root:
@@ -20,6 +89,8 @@ node --experimental-transform-types --import ./tests/loader.mjs scripts/recover-
 The script validates every page, history revision, relationship and normalized PNG before writing. It creates an isolated SQLite database plus a private object directory, preserving IDs, revisions, timestamps, task/comment history and snapshots. It does not contact or modify the live Site. The destination must be absent or an owner-only private directory. An existing directory with group/other access or a symbolic link is rejected; the tool does not change pre-existing permissions. Database files are created owner-only. A nonempty destination must belong to this exact recovery. Same-file retries are idempotent; a different backup/owner or existing unrelated database is rejected. Blob writes are restartable and SQL records are committed atomically. State updates use atomic rename with filesystem synchronization. Every retry re-verifies all restored rows and image bytes, even when a completion marker already exists; changed recovery data is rejected rather than overwritten.
 
 The object files correspond to the `images/<owner hash>/<attachment ID>` keys recorded in the database. An actual live deployment recovery requires an explicit owner-authorized database/object migration and verification; this offline command is not a live restore endpoint and does not claim managed point-in-time recovery.
+
+For an OAuth hosting cutover, use the complete v2 backup and exact recovery path. Portable imports deliberately assign new IDs and are therefore unsuitable for preserving existing MCP record references. The immutable-principal mapping, synthetic acceptance gate, read-only window and rollback reconciliation are specified in [docs/oauth-cutover.md](docs/oauth-cutover.md). No real task migration is authorized by an implementation or a draft PR.
 
 ## Storage behavior
 

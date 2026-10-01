@@ -1,0 +1,11 @@
+# Examples only. Copy into ignored .dev.vars for an explicitly approved staging environment.
+# Never place real account IDs, allowlisted identities, callbacks, or secrets in Git.
+WORKOS_AUTHKIT_ISSUER="https://your-environment.authkit.app"
+WORKOS_MCP_AUDIENCE="https://task-board.example.com/mcp"
+TASK_BOARD_ORIGIN="https://task-board.example.com"
+WORKOS_BROWSER_CLIENT_ID="client_replace_in_private_configuration"
+WORKOS_API_KEY="replace_privately"
+# Generate 32 random bytes encoded base64url without padding; no fallback key exists.
+TASK_BOARD_SESSION_SECRET="replace_privately_with_43_base64url_characters"
+TASK_BOARD_AUTH_POLICY='{"version":1,"owners":[],"clients":[]}'
+TASK_BOARD_READ_ONLY="true"
