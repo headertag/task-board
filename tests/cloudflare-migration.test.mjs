@@ -10,11 +10,11 @@ import {BoardService} from '../lib/service.ts';
 import {backupPage,migrationPage,validateBackup} from '../lib/backup.ts';
 import {normalizePng,crc32} from '../lib/image.ts';
 import {hash,stable} from '../lib/safety.ts';
-import {migrateCloudflare,cloudflareTransport,migrationOptionsFromEnvironment,MigrationError} from '../scripts/migrate-cloudflare.mjs';
+import {migrateCloudflare,cloudflareTransport,migrationOptionsFromEnvironment,MigrationError,signedR2Request} from '../scripts/migrate-cloudflare.mjs';
 
 // Every record and credential is fictional; the injected transport never reaches a network.
 const owner='fictional-source-storage-owner',token='fictional-cloudflare-token';
-const settings={accountId:'a'.repeat(32),databaseId:'11111111-2222-4333-8444-555555555555',databaseName:'task-board-db',bucketName:'task-board-images',origin:'https://task-board.fictional-owner.workers.dev',apiToken:token,approved:true};
+const settings={accountId:'a'.repeat(32),apiTokenId:'b'.repeat(32),databaseId:'11111111-2222-4333-8444-555555555555',databaseName:'task-board-db',bucketName:'task-board-images',origin:'https://task-board.fictional-owner.workers.dev',apiToken:token,approved:true};
 function chunk(type,body){const out=new Uint8Array(body.length+12),v=new DataView(out.buffer);v.setUint32(0,body.length);out.set(new TextEncoder().encode(type),4);out.set(body,8);v.setUint32(out.length-4,crc32(out.subarray(4,out.length-4)));return out}
 const header=new Uint8Array(13);new DataView(header.buffer).setUint32(0,1);new DataView(header.buffer).setUint32(4,1);header[8]=8;header[9]=6;
 const image=(await normalizePng(Buffer.concat([Uint8Array.from([137,80,78,71,13,10,26,10]),chunk('IHDR',header),chunk('IDAT',deflateSync(Uint8Array.from([0,255,0,0,255]))),chunk('IEND',new Uint8Array())]))).bytes;
@@ -38,7 +38,10 @@ function destination(t){
  const hooks={};
  async function fetcher(url,init={}){
   const uri=new URL(url),request={url:String(url),init};requests.push(request);
-  assert.equal(uri.origin,'https://api.cloudflare.com');assert.equal(init.redirect,'manual');assert.equal(init.headers.Authorization,`Bearer ${token}`);
+  const objectRequest=uri.origin===`https://${settings.accountId}.r2.cloudflarestorage.com`;
+  assert.equal(init.redirect,'manual');
+  if(objectRequest){assert.match(init.headers.authorization,new RegExp('^AWS4-HMAC-SHA256 Credential='+settings.apiTokenId+'/'));assert.equal(init.headers.authorization.includes(token),false);assert.equal(init.headers['x-amz-content-sha256'],await hash(init.body??new Uint8Array()));}
+  else{assert.equal(uri.origin,'https://api.cloudflare.com');assert.equal(init.headers.Authorization,`Bearer ${token}`);}
   if(hooks.response){const r=await hooks.response(request);if(r)return r}
   let result;
   if(uri.pathname.endsWith('/query')){
@@ -46,10 +49,10 @@ function destination(t){
    const statement=sql.prepare(input.sql),rows=/^\s*SELECT/i.test(input.sql)?statement.all(...input.params):(statement.run(...input.params),[]);
    if(hooks.afterSql){const r=await hooks.afterSql(input);if(r)return r}
    result=[{success:true,results:rows}];
-  }else if(uri.pathname.includes('/objects/')){
-   const key=uri.pathname.split('/objects/')[1].split('/').map(decodeURIComponent).join('/');
+  }else if(objectRequest){
+   assert.ok(uri.pathname.startsWith('/'+settings.bucketName+'/'));const key=uri.pathname.slice(settings.bucketName.length+2).split('/').map(decodeURIComponent).join('/');
    if(init.method==='PUT'){
-    assert.equal(init.headers['If-None-Match'],'*');assert.equal(init.headers['cf-r2-data-catalog-check'],'true');assert.equal(init.headers['Content-Type'],'image/png');
+    assert.equal(init.headers['if-none-match'],'*');assert.equal(init.headers['content-type'],'image/png');assert.ok(init.headers.authorization.includes('if-none-match'));
     if(objects.has(key))return new Response(null,{status:412});objects.set(key,new Uint8Array(init.body));return new Response(null,{status:200});
    }
    return objects.has(key)?new Response(objects.get(key)):new Response(null,{status:404});
@@ -106,7 +109,7 @@ test('wrong owner, ordinary v2, invalid capture, substituted upload key or unapp
 test('a conflicting existing image is never overwritten and a failed precondition is verified rather than treated as success',async t=>{
  const f=await source(t),d=destination(t),a=f.pages[0].attachments[0],key=`images/${f.pages[0].ownerTag}/${a.id}`,conflict=new Uint8Array([1,2,3]);d.objects.set(key,conflict);
  await expectCode(()=>run(f,d),'destination_image_conflict');assert.deepEqual(d.objects.get(key),conflict);assert.equal(d.requests.filter(r=>r.init.method==='PUT').length,0);assert.equal(d.sql.prepare('SELECT COUNT(*) AS n FROM tasks WHERE owner=?').get(owner).n,0);
- const racing=destination(t);racing.hooks.response=request=>{if(request.init.method==='PUT'){const objectKey=new URL(request.url).pathname.split('/objects/')[1];racing.objects.set(objectKey,conflict);return new Response(null,{status:412})}};
+ const racing=destination(t);racing.hooks.response=request=>{if(request.init.method==='PUT'){const objectKey=new URL(request.url).pathname.slice(settings.bucketName.length+2);racing.objects.set(objectKey,conflict);return new Response(null,{status:412})}};
  await expectCode(()=>run(f,racing),'destination_image_conflict');assert.deepEqual(racing.objects.get(key),conflict);
 });
 
@@ -146,19 +149,40 @@ test('Cloudflare redirects, followed responses and PUT transport failures are re
  const key='images/fictional-owner/fictional-id';
  for(const method of ['inspect','putObject'])for(const kind of ['redirect','followed','network']){
   const calls=[];const remote=cloudflareTransport(settings,async(url,init)=>{calls.push({url,init});if(kind==='network')throw new Error('fictional network failure containing '+token);if(kind==='redirect')return new Response(null,{status:307,headers:{Location:'https://fictional-redirect.invalid'}});const r=Response.json({success:true,result:{}});Object.defineProperty(r,'redirected',{value:true});return r});
-  await expectCode(()=>method==='inspect'?remote.inspect():remote.putObject(key,image),kind==='network'?(method==='inspect'?'remote_request':'object_upload'):'remote_redirect');assert.equal(calls.length,1);assert.equal(calls[0].init.redirect,'manual');assert.equal(new URL(calls[0].url).origin,'https://api.cloudflare.com');
+  await expectCode(()=>method==='inspect'?remote.inspect():remote.putObject(key,image),kind==='network'?(method==='inspect'?'remote_request':'object_upload'):'remote_redirect');assert.equal(calls.length,1);assert.equal(calls[0].init.redirect,'manual');assert.equal(new URL(calls[0].url).origin,method==='inspect'?'https://api.cloudflare.com':`https://${settings.accountId}.r2.cloudflarestorage.com`);
  }
 });
 
 test('CLI file inputs reject open files, ancestor symlinks, checkout/public paths and invalid JSON',async t=>{
  const f=await source(t),root=await mkdtemp(path.join(tmpdir(),'task-board-migration-files-'));t.after(()=>rm(root,{recursive:true,force:true}));
  const captureFile=path.join(root,'capture.json'),tokenFile=path.join(root,'token');await writeFile(captureFile,JSON.stringify({format:'task-board-local-backup',version:3,pages:f.pages}),{mode:0o600});await writeFile(tokenFile,token+'\n',{mode:0o600});
- const env={TASK_BOARD_MIGRATION_FILE:captureFile,CLOUDFLARE_API_TOKEN_FILE:tokenFile,CLOUDFLARE_ACCOUNT_ID:settings.accountId,TASK_BOARD_D1_DATABASE_ID:settings.databaseId,TASK_BOARD_D1_DATABASE_NAME:settings.databaseName,TASK_BOARD_R2_BUCKET_NAME:settings.bucketName,TASK_BOARD_PRODUCTION_ORIGIN:settings.origin,TASK_BOARD_MIGRATION_APPROVED:'true'};
- const options=await migrationOptionsFromEnvironment(env);assert.equal(options.owner,undefined);assert.equal(options.apiToken,token);assert.deepEqual(options.pages,f.pages);
+ const env={TASK_BOARD_MIGRATION_FILE:captureFile,CLOUDFLARE_API_TOKEN_FILE:tokenFile,CLOUDFLARE_API_TOKEN_ID:settings.apiTokenId,CLOUDFLARE_ACCOUNT_ID:settings.accountId,TASK_BOARD_D1_DATABASE_ID:settings.databaseId,TASK_BOARD_D1_DATABASE_NAME:settings.databaseName,TASK_BOARD_R2_BUCKET_NAME:settings.bucketName,TASK_BOARD_PRODUCTION_ORIGIN:settings.origin,TASK_BOARD_MIGRATION_APPROVED:'true'};
+ const options=await migrationOptionsFromEnvironment(env);assert.equal(options.owner,undefined);assert.equal(options.apiToken,token);assert.equal(options.apiTokenId,settings.apiTokenId);assert.deepEqual(options.pages,f.pages);
  await chmod(tokenFile,0o644);await expectCode(()=>migrationOptionsFromEnvironment(env),'private_file');await chmod(tokenFile,0o600);
  const ancestor=path.join(root,'linked');await symlink(root,ancestor);await expectCode(()=>migrationOptionsFromEnvironment({...env,TASK_BOARD_MIGRATION_FILE:path.join(ancestor,'capture.json')}),'private_file');
  for(const name of ['public','dist']){const folder=path.join(root,name);await mkdir(folder);await writeFile(path.join(folder,'capture.json'),await readFile(captureFile),{mode:0o600});await expectCode(()=>migrationOptionsFromEnvironment({...env,TASK_BOARD_MIGRATION_FILE:path.join(folder,'capture.json')}),'private_file')}
  const checkout=path.join(root,'checkout');await mkdir(path.join(checkout,'.git'),{recursive:true});await writeFile(path.join(checkout,'.git','HEAD'),'ref: refs/heads/main\n');await writeFile(path.join(checkout,'capture.json'),await readFile(captureFile),{mode:0o600});await expectCode(()=>migrationOptionsFromEnvironment({...env,TASK_BOARD_MIGRATION_FILE:path.join(checkout,'capture.json')}),'private_file');
  const worktree=path.join(root,'worktree');await mkdir(worktree);await writeFile(path.join(worktree,'.git'),'gitdir: /fictional/worktree\n');await writeFile(path.join(worktree,'capture.json'),await readFile(captureFile),{mode:0o600});await expectCode(()=>migrationOptionsFromEnvironment({...env,TASK_BOARD_MIGRATION_FILE:path.join(worktree,'capture.json')}),'private_file');
  await expectCode(()=>migrationOptionsFromEnvironment({...env,CLOUDFLARE_API_TOKEN:token}),'credentials');await writeFile(captureFile,'invalid fictional JSON');await expectCode(()=>migrationOptionsFromEnvironment(env),'invalid_capture');
+});
+
+test('S3 signing matches the published AWS Signature V4 golden example',()=>{
+ // AWS's public fictional test credentials and expected signature:
+ // https://docs.aws.amazon.com/AmazonS3/latest/developerguide/sig-v4-header-based-auth.html
+ const init=signedR2Request('https://examplebucket.s3.amazonaws.com/test.txt',{accessKeyId:'AKIAIOSFODNN7EXAMPLE',secretAccessKey:'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',now:new Date('2013-05-24T00:00:00Z'),region:'us-east-1',range:'bytes=0-9'});
+ assert.equal(init.headers.authorization,'AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41');
+ assert.equal(init.redirect,'manual');
+});
+
+test('S3 token ID is explicit and object errors never expose bearer or derived secret',async t=>{
+ const f=await source(t);
+ for(const apiTokenId of [undefined,'invalid',settings.accountId]){const d=destination(t);await expectCode(()=>run(f,d,{apiTokenId}),'configuration');assert.equal(d.requests.length,0);}
+ for(const status of [301,403,500]){
+  const requests=[],remote=cloudflareTransport(settings,async(url,init)=>{requests.push({url,init});return new Response('Fictional failure '+token,{status});});
+  await expectCode(()=>remote.getObject('images/fictional-owner/fictional-id'),status===301?'remote_redirect':status===403?'remote_authorization':'remote_request');
+  assert.equal(requests.length,1);assert.equal(requests[0].init.headers.authorization.includes(token),false);assert.equal(requests[0].init.headers.Authorization,undefined);
+ }
+ const requests=[],remote=cloudflareTransport(settings,async(url,init)=>{requests.push({url,init});return new Response(null,{status:412});});
+ await remote.putObject('images/fictional-owner/fictional-id',image);assert.equal(requests.length,1);assert.equal(requests[0].init.headers['if-none-match'],'*');
+ await expectCode(()=>remote.getObject('../other-bucket/key'),'configuration');assert.equal(requests.length,1);
 });
