@@ -188,7 +188,10 @@ async function privateFile(filename,maxBytes) {
     for (let i=0;i<parts.length;i++) {
       current=path.join(current,parts[i]);const info=await lstat(current);
       if (info.isSymbolicLink()||i<parts.length-1&&!info.isDirectory()) stop('private_file');
-      try { await lstat(path.join(current,'.git','HEAD')); stop('private_file'); } catch(e) { if(e.code!=='ENOENT'&&e.code!=='ENOTDIR')throw e; }
+      if (info.isDirectory()) {
+        try { const git=await lstat(path.join(current,'.git'));if(!git.isDirectory())stop('private_file');await lstat(path.join(current,'.git','HEAD'));stop('private_file'); }
+        catch(e) { if(e.code!=='ENOENT')throw e; }
+      }
     }
     const info=await lstat(resolved);
     if (!info.isFile()||(info.mode&0o077)!==0||info.uid!==process.getuid?.()||info.size>maxBytes) stop('private_file');
