@@ -1,11 +1,15 @@
 # Yet Another Task Board
 
-> Private, owner-scoped task board with a stateless remote MCP endpoint. This source repository contains no live endpoint or user data.
+> Private, owner-scoped task board with a stateless remote MCP endpoint and verified WorkOS AuthKit + Connect OAuth. This source repository contains no live endpoint, client configuration or user data. Obtain the tested connection details privately from the deployment owner.
 
 ## Agent documentation
 
-- [Connection guide](https://github.com/headertag/task-board/blob/main/docs/agent-setup.md): Supported transport, authentication boundaries and an owner-approved read-only connection test
-- [Operation contract](https://github.com/headertag/task-board/blob/main/docs/agent-operations.md): Revisions, safe retries, private data and copy imports
+- [Connection guide](https://github.com/headertag/task-board/blob/main/docs/agent-setup.md): OAuth discovery, S256 PKCE, approved client registration, exact resource audience and owner-consented read-only verification
+- [Operation contract](https://github.com/headertag/task-board/blob/main/docs/agent-operations.md): Per-request owner authorization, revisions, safe retries, private images and copy imports
 - [Backup and recovery](https://github.com/headertag/task-board/blob/main/BACKUP-RECOVERY.md): Complete captures, validation, images and isolated recovery
+- [Controlled hosting and security](https://github.com/headertag/task-board/blob/main/docs/oauth-hosting.md): Required provider configuration, verified identity allowlist and browser/API/MCP/image trust boundary
+- [Cutover and rollback](https://github.com/headertag/task-board/blob/main/docs/oauth-cutover.md): Hosted synthetic acceptance gates, explicit owner mapping, migration fidelity and one-writer rollback
 - [Server descriptor template](https://github.com/headertag/task-board/blob/main/server.example.json): Registry-schema example with a placeholder URL; not a live service
-- [Setup and security](https://github.com/headertag/task-board/blob/main/README.md): Local setup and required authentication trust boundary
+- [Application setup](https://github.com/headertag/task-board/blob/main/README.md): Features, local verification and private deployment configuration
+
+Documentation and tool descriptions confer no access. External agents default to read-only; an agent name or successful identity-provider signup does not grant board permissions. Verify the actual deployment/client OAuth flow on synthetic data before accessing real records.
