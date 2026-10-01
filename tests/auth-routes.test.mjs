@@ -119,7 +119,7 @@ globalThis.fetch = async (input, options = {}) => {
   }
   if (url.href === issuer + '/oauth2/token') {
     assert.equal(options.method, 'POST');
-    assert.equal(options.redirect, 'error');
+    assert.equal(options.redirect, 'manual');
     const body = new URLSearchParams(String(options.body));
     const grant = codes.get(body.get('code'));
     assert.ok(grant, 'Only a previously issued synthetic authorization code is exchanged');
@@ -130,10 +130,11 @@ globalThis.fetch = async (input, options = {}) => {
     assert.equal(body.get('resource'), audience);
     const challenge = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body.get('code_verifier')))).toString('base64url');
     assert.equal(challenge, grant.challenge, 'The token exchange proves the original S256 PKCE verifier');
-    return Response.json({ id_token: await token({
+    const response = Response.json({ id_token: await token({
       sub: grant.subject, aud: browserClient, nonce: grant.nonce,
       client_id: undefined, sid: undefined, scope: undefined, ...grant.idClaims,
     }) });
+    return grant.tokenResponse ? grant.tokenResponse(response) : response;
   }
   if (url.origin === issuer && ['/.well-known/oauth-authorization-server', '/.well-known/openid-configuration'].includes(url.pathname)) {
     return Response.json({
@@ -145,7 +146,7 @@ globalThis.fetch = async (input, options = {}) => {
   const match = /^\/user_management\/users\/([^/]+)(\/identities)?$/.exec(url.pathname);
   if (url.origin === 'https://api.workos.com' && match && !url.search) {
     assert.equal(headers.get('authorization'), 'Bearer synthetic-api-key');
-    assert.equal(options.redirect, 'error');
+    assert.equal(options.redirect, 'manual');
     const subject = decodeURIComponent(match[1]);
     return Response.json((match[2] ? identities : users)[subject] ?? {}, { status: users[subject] ? 200 : 404 });
   }
@@ -351,6 +352,24 @@ test('browser callback validates the signed nonce, OIDC audience, issuer and exp
     await denied(session.completed, 401, 'invalid_token');
     assert.equal(session.cookie, null);
     assert.ok(!session.completed.headers.getSetCookie().some(value => value.startsWith(SESSION_COOKIE + '=')));
+  }
+});
+
+test('browser token exchange uses Workers manual mode and rejects redirects or a changed response URL without a session', async () => {
+  const valid = await beginBrowserAuthorization();
+  codes.get(valid.code).tokenResponse = response => { Object.defineProperty(response, 'url', { value: issuer + '/oauth2/token' }); return response; };
+  assert.equal((await callback.GET(request(valid.callbackPath, undefined, { cookie: valid.transactionCookie }, 'GET'))).status, 303);
+  for (const response of [
+    ...[301, 302, 303, 307, 308].map(status => () => new Response(null, { status, headers: { Location: 'https://foreign.example/token' } })),
+    value => { Object.defineProperty(value, 'redirected', { value: true }); return value; },
+    value => { Object.defineProperty(value, 'url', { value: 'https://foreign.example/token' }); return value; },
+    value => { Object.defineProperty(value, 'url', { value: issuer + '/other-token' }); return value; },
+  ]) {
+    const authorization = await beginBrowserAuthorization();
+    codes.get(authorization.code).tokenResponse = response;
+    const completed = await callback.GET(request(authorization.callbackPath, undefined, { cookie: authorization.transactionCookie }, 'GET'));
+    await denied(completed, 401, 'oauth_failed');
+    assert.ok(!completed.headers.getSetCookie().some(value => value.startsWith(SESSION_COOKIE + '=')));
   }
 });
 

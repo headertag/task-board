@@ -7,14 +7,21 @@ export function protectedResourceMetadata(config: AuthConfig) {
 // The configured issuer is authoritative. Never fabricate a registration endpoint
 // or advertise enabled DCR/CIMD when the provider has not actually enabled it.
 export async function authorizationServerMetadata(config: AuthConfig, fetcher: typeof fetch = fetch, oidc = false) {
-  const response = await fetcher(new URL(oidc ? '/.well-known/openid-configuration' : '/.well-known/oauth-authorization-server', config.issuer), { redirect: 'error', signal: AbortSignal.timeout(10000), headers: { Accept: 'application/json' } });
-  if (!response.ok) throw new AuthError(503, 'auth_discovery_unavailable', 'Authorization discovery is unavailable');
+  const discovery = new URL(oidc ? '/.well-known/openid-configuration' : '/.well-known/oauth-authorization-server', config.issuer);
+  let response: Response;
+  try {
+    // Workers supports only follow/manual. Reject redirects explicitly rather
+    // than using redirect:error, which throws before issuing the request there.
+    response = await fetcher(discovery, { redirect: 'manual', signal: AbortSignal.timeout(10000), headers: { Accept: 'application/json' } });
+  } catch { throw new AuthError(503, 'auth_discovery_unavailable', 'Authorization discovery is unavailable'); }
+  if (!response.ok || response.redirected || (response.url && response.url !== discovery.href)) throw new AuthError(503, 'auth_discovery_unavailable', 'Authorization discovery is unavailable');
   let metadata: any;
   try { metadata = await authJSON(response); } catch { throw new AuthError(503, 'auth_discovery_unavailable', 'Authorization discovery is unavailable'); }
-  if (metadata.issuer !== config.issuer || !metadata.response_types_supported?.includes('code') ||
-    (!oidc && !metadata.code_challenge_methods_supported?.includes('S256')) ||
-    (oidc && metadata.code_challenge_methods_supported !== undefined && !metadata.code_challenge_methods_supported?.includes('S256'))) throw new AuthError(503, 'auth_discovery_invalid', 'Authorization discovery is unavailable');
-  for (const name of ['authorization_endpoint', 'token_endpoint', 'jwks_uri', 'registration_endpoint', 'userinfo_endpoint', 'introspection_endpoint', 'revocation_endpoint', 'end_session_endpoint']) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata) ||
+    metadata.issuer !== config.issuer || !Array.isArray(metadata.response_types_supported) || !metadata.response_types_supported.includes('code') ||
+    ((!oidc || metadata.code_challenge_methods_supported !== undefined) &&
+      (!Array.isArray(metadata.code_challenge_methods_supported) || !metadata.code_challenge_methods_supported.includes('S256')))) throw new AuthError(503, 'auth_discovery_invalid', 'Authorization discovery is unavailable');
+  for (const name of ['authorization_endpoint', 'token_endpoint', 'jwks_uri', 'registration_endpoint', 'userinfo_endpoint', 'introspection_endpoint', 'revocation_endpoint', 'end_session_endpoint', 'device_authorization_endpoint']) {
     if (metadata[name] === undefined && !['authorization_endpoint', 'token_endpoint'].includes(name)) continue;
     let endpoint: URL;
     try { endpoint = new URL(metadata[name]); } catch { throw new AuthError(503, 'auth_discovery_invalid', 'Authorization discovery is unavailable'); }

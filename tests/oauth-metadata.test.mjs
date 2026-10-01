@@ -7,7 +7,7 @@ import { beginSignIn, readBrowserConfig, safeReturnTo, TRANSACTION_COOKIE, unsea
 const bindings={WORKOS_AUTHKIT_ISSUER:'https://auth.synthetic.authkit.app',WORKOS_MCP_AUDIENCE:'https://board.example.com/mcp',WORKOS_API_KEY:'synthetic-key',TASK_BOARD_AUTH_POLICY:JSON.stringify({version:1,owners:[],clients:[]})};
 const config=readAuthConfig(bindings);
 const metadata={issuer:config.issuer,authorization_endpoint:config.issuer+'/oauth2/authorize',token_endpoint:config.issuer+'/oauth2/token',jwks_uri:config.issuer+'/oauth2/jwks',registration_endpoint:config.issuer+'/oauth2/register',code_challenge_methods_supported:['S256'],response_types_supported:['code'],scopes_supported:['openid','profile','email'],client_id_metadata_document_supported:true};
-const fetcher=async(url,options)=>{assert.equal(options.redirect,'error');assert.ok(options.signal);assert.equal(new URL(url).origin,config.issuer);return Response.json(metadata)};
+const fetcher=async(url,options)=>{assert.equal(options.redirect,'manual');assert.ok(options.signal);assert.equal(new URL(url).origin,config.issuer);return Response.json(metadata)};
 test('retained Worker exposes root and path resource discovery with exact audience and no private policy',async()=>{
  for(const path of ['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp']){
   const response=await oauthDiscovery(new Request('https://board.example.com'+path),bindings,fetcher);
@@ -25,9 +25,31 @@ test('compatibility discovery relays actual configured provider capabilities',as
  assert.deepEqual(await authorizationServerMetadata(config,async()=>Response.json(oidc),true),oidc);
 });
 test('discovery rejects wrong issuer, nonPKCE OAuth, foreign endpoints, oversized and bad responses',async()=>{
- for(const bad of [{...metadata,issuer:'https://evil.example'},{...metadata,code_challenge_methods_supported:['plain']},{...metadata,token_endpoint:'https://evil.example/token'},{...metadata,registration_endpoint:'http://auth.synthetic.authkit.app/register'}])await assert.rejects(authorizationServerMetadata(config,async()=>Response.json(bad)),e=>e.status===503);
+ for(const bad of [null,[],{...metadata,issuer:'https://evil.example'},{...metadata,response_types_supported:'code'},{...metadata,code_challenge_methods_supported:'S256'},{...metadata,code_challenge_methods_supported:['plain']},{...metadata,token_endpoint:'https://evil.example/token'},{...metadata,registration_endpoint:'http://auth.synthetic.authkit.app/register'},{...metadata,device_authorization_endpoint:'https://evil.example/device'}])await assert.rejects(authorizationServerMetadata(config,async()=>Response.json(bad)),e=>e.status===503);
  await assert.rejects(authorizationServerMetadata(config,async()=>new Response('x'.repeat(64001))),e=>e.status===503);
  await assert.rejects(authorizationServerMetadata(config,async()=>new Response('',{status:500})),e=>e.status===503);
+});
+test('Workers-compatible discovery rejects redirects and changed response URLs without following them',async()=>{
+ const provider={...metadata,device_authorization_endpoint:config.issuer+'/oauth2/device_authorization'};
+ delete provider.registration_endpoint;delete provider.client_id_metadata_document_supported;
+ for(const oidc of [false,true])assert.deepEqual(await authorizationServerMetadata(config,async(url,options)=>{
+  assert.equal(options.redirect,'manual');
+  assert.equal(new URL(url).pathname,oidc?'/.well-known/openid-configuration':'/.well-known/oauth-authorization-server');
+  return Response.json(provider);
+ },oidc),provider);
+ for(const status of [301,302,303,307,308]){
+  let calls=0;
+  await assert.rejects(authorizationServerMetadata(config,async(_url,options)=>{
+   calls++;assert.equal(options.redirect,'manual');
+   return new Response(null,{status,headers:{Location:'https://evil.example/discovery'}});
+  }),e=>e.status===503&&e.code==='auth_discovery_unavailable');
+  assert.equal(calls,1);
+ }
+ for(const field of [{name:'redirected',value:true},{name:'url',value:'https://evil.example/discovery'},{name:'url',value:config.issuer+'/.well-known/openid-configuration'}]){
+  const response=Response.json(provider);Object.defineProperty(response,field.name,{value:field.value});
+  await assert.rejects(authorizationServerMetadata(config,async()=>response),e=>e.status===503);
+ }
+ await assert.rejects(authorizationServerMetadata(config,async()=>{throw new TypeError('Synthetic network failure')}),e=>e.status===503&&e.code==='auth_discovery_unavailable');
 });
 test('browser signin pins PKCE, state, nonce, audience, redirect and safe return paths',async()=>{
  const browser=readBrowserConfig({TASK_BOARD_ORIGIN:'https://board.example.com',WORKOS_BROWSER_CLIENT_ID:'client_synthetic_browser',TASK_BOARD_SESSION_SECRET:'A'.repeat(43)},config);

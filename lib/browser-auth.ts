@@ -80,8 +80,11 @@ export async function finishSignIn(request: Request, config: BrowserConfig, stor
   const tx = await unseal(value, 'transaction', config) as Transaction;
   if (tx.expiresAt <= now || tx.expiresAt > now + 600 || tx.origin !== config.origin || tx.issuer !== config.auth.issuer || tx.clientId !== config.clientId || !tx.state || !tx.nonce || !tx.verifier || url.searchParams.getAll('state').length !== 1 || url.searchParams.get('state') !== tx.state || url.searchParams.getAll('code').length !== 1 || !url.searchParams.get('code') || url.searchParams.has('error')) throw new AuthError(401, 'invalid_oauth_state', 'Sign in again');
   if (!await store.consume(await digest(tx.state), now)) throw new AuthError(401, 'invalid_oauth_state', 'Sign in again');
-  const response = await (deps.fetch || fetch)(new URL('/oauth2/token', config.auth.issuer), { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000), headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, body: new URLSearchParams({ grant_type: 'authorization_code', code: url.searchParams.get('code')!, client_id: config.clientId, redirect_uri: config.origin + '/auth/callback', code_verifier: tx.verifier, resource: config.auth.audience }) });
-  if (!response.ok) throw new AuthError(401, 'oauth_failed', 'Sign in again');
+  const endpoint = new URL('/oauth2/token', config.auth.issuer);
+  // Workers supports manual/follow, but rejects redirect: 'error'. Manual keeps
+  // the authorization code and verifier at the exact configured endpoint.
+  const response = await (deps.fetch || fetch)(endpoint, { method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(10000), headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, body: new URLSearchParams({ grant_type: 'authorization_code', code: url.searchParams.get('code')!, client_id: config.clientId, redirect_uri: config.origin + '/auth/callback', code_verifier: tx.verifier, resource: config.auth.audience }) });
+  if (!response.ok || response.redirected || (response.url && response.url !== endpoint.href)) throw new AuthError(401, 'oauth_failed', 'Sign in again');
   let tokens: any;
   try { tokens = await authJSON(response, 32000); } catch { throw new AuthError(401, 'oauth_failed', 'Sign in again'); }
   if (typeof tokens.id_token !== 'string') throw new AuthError(401, 'oauth_failed', 'Sign in again');

@@ -239,9 +239,12 @@ async function lookupWorkosUser(subject: string, config: AuthConfig, dependencie
       const url = `https://api.workos.com/user_management/users/${encodeURIComponent(subject)}${path}`;
       const response = await request(url, {
         headers: { Authorization: `Bearer ${config.apiKey}`, Accept: 'application/json' },
-        redirect: 'error', signal: AbortSignal.timeout(5000),
+        // Workers supports manual redirects; reject them here before any API
+        // credential can be forwarded to another origin or identity endpoint.
+        redirect: 'manual', signal: AbortSignal.timeout(5000),
       });
-      if (!response.ok || response.redirected || (response.url && response.url !== url)) throw new Error('Identity lookup failed');
+      if (response.status < 200 || response.status >= 300 || response.redirected ||
+        (response.url && response.url !== url)) throw new Error('Identity lookup failed');
       return await boundedJson(response);
     } catch {
       throw new AppError(503, 'auth_unavailable', 'Identity verification is temporarily unavailable');

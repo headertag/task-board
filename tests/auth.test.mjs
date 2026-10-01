@@ -44,7 +44,7 @@ function workosMock(users = profiles, social = identities) {
   const fetch = async (url, options) => {
     requests.push({ url, options });
     assert.equal(options.headers.Authorization, 'Bearer synthetic-api-key');
-    assert.equal(options.redirect, 'error');
+    assert.equal(options.redirect, 'manual');
     const match = /^https:\/\/api\.workos\.com\/user_management\/users\/([^/]+)(\/identities)?$/.exec(url);
     assert.ok(match, 'API key is sent only to the pinned WorkOS API');
     const subject = decodeURIComponent(match[1]);
@@ -177,6 +177,47 @@ test('authoritative API mismatch, failure, redirect, and missing records cannot 
   const oversizedLength = async () => Response.json(profiles.user_synthetic_a, { headers: { 'content-length': '1000000' } });
   for (const fetch of [redirected, oversized, oversizedLength]) {
     await assert.rejects(() => authenticateBearer(jwtHeaders, config, { key, currentDate, fetch }), statusIs(503, 'auth_unavailable'));
+  }
+});
+
+test('identity lookup uses Workers-compatible manual redirects and accepts the exact native response URL', async () => {
+  const mock = workosMock();
+  const fetch = async (url, options) => {
+    const response = await mock.dependencies.fetch(url, options);
+    Object.defineProperty(response, 'url', { value: url });
+    return response;
+  };
+  const principal = await authenticateBearer(headersFor(await token()), config, { ...mock.dependencies, fetch });
+  assert.equal(principal.ownerId, 'legacy-owner-synthetic-a');
+  assert.equal(mock.requests.length, 2);
+  assert.deepEqual(mock.requests.map(request => request.options.redirect), ['manual', 'manual']);
+});
+
+test('both authoritative identity endpoints reject redirects and changed final response URLs', async () => {
+  const jwtHeaders = headersFor(await token());
+  for (const identitiesEndpoint of [false, true]) {
+    for (const status of [301, 302, 303, 307, 308, 400, 401, 500]) {
+      const mock = workosMock();
+      const fetch = async (url, options) => {
+        if (url.endsWith('/identities') === identitiesEndpoint) {
+          assert.equal(options.redirect, 'manual');
+          return new Response(null, { status, headers: { Location: 'https://other.example.com/identity' } });
+        }
+        return mock.dependencies.fetch(url, options);
+      };
+      await assert.rejects(() => authenticateBearer(jwtHeaders, config, { ...mock.dependencies, fetch }), statusIs(503, 'auth_unavailable'));
+    }
+    for (const properties of [{ redirected: true }, { url: 'https://other.example.com/identity' }, { url: 'https://api.workos.com/user_management/users/user_other' }]) {
+      const mock = workosMock();
+      const fetch = async (url, options) => {
+        const response = await mock.dependencies.fetch(url, options);
+        if (url.endsWith('/identities') === identitiesEndpoint) {
+          for (const [name, value] of Object.entries(properties)) Object.defineProperty(response, name, { value });
+        }
+        return response;
+      };
+      await assert.rejects(() => authenticateBearer(jwtHeaders, config, { ...mock.dependencies, fetch }), statusIs(503, 'auth_unavailable'));
+    }
   }
 });
 
