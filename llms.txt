@@ -9,3 +9,7 @@
 - [Backup and recovery](https://github.com/headertag/task-board/blob/main/BACKUP-RECOVERY.md): Complete captures, validation, images and isolated recovery
 - [Server descriptor template](https://github.com/headertag/task-board/blob/main/server.example.json): Registry-schema example with a placeholder URL; not a live service
 - [Setup and security](https://github.com/headertag/task-board/blob/main/README.md): Local setup and required authentication trust boundary
+
+## Controlled OAuth hosting candidate
+
+A WorkOS OAuth candidate is documented in the [candidate connection guide](https://github.com/headertag/task-board/blob/0f5960193ec8e0f5f7976f6272e8b7a4884bc76d/docs/agent-setup.md) and [cutover gates](https://github.com/headertag/task-board/blob/0f5960193ec8e0f5f7976f6272e8b7a4884bc76d/docs/oauth-cutover.md). These describe the candidate revision. Main still requires the Sites authenticated proxy, and ALICE interoperability remains unverified. The existing private deployment remains authoritative until verification and authorized cutover.
