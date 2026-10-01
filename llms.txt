@@ -1,6 +1,6 @@
 # Yet Another Task Board
 
-> Private, owner-scoped task board with a stateless remote MCP endpoint and verified WorkOS AuthKit + Connect OAuth. This source repository contains no live endpoint, client configuration or user data. Obtain the tested connection details privately from the deployment owner.
+> Private, owner-scoped task board with a stateless remote MCP endpoint and an implemented WorkOS AuthKit + Connect OAuth candidate. This source repository contains no live endpoint, client configuration or user data. Obtain approved connection details privately from the deployment owner.
 
 ## Agent documentation
 
@@ -11,5 +11,11 @@
 - [Cutover and rollback](https://github.com/headertag/task-board/blob/main/docs/oauth-cutover.md): Hosted synthetic acceptance gates, explicit owner mapping, migration fidelity and one-writer rollback
 - [Server descriptor template](https://github.com/headertag/task-board/blob/main/server.example.json): Registry-schema example with a placeholder URL; not a live service
 - [Application setup](https://github.com/headertag/task-board/blob/main/README.md): Features, local verification and private deployment configuration
+
+## Controlled OAuth hosting candidate
+
+The [candidate connection guide](https://github.com/headertag/task-board/blob/0f5960193ec8e0f5f7976f6272e8b7a4884bc76d/docs/agent-setup.md) and [cutover gates](https://github.com/headertag/task-board/blob/0f5960193ec8e0f5f7976f6272e8b7a4884bc76d/docs/oauth-cutover.md) describe the implemented candidate revision. Hosted owner and external-client acceptance, including ALICE's actual browser OAuth and read-only task flow, remain pending. Local verification does not establish that the deployed client flow works. The existing private deployment remains authoritative until verification and authorized production cutover.
+
+Production cutover also requires approved production identity configuration and explicit owner mapping, authoritative attachment upload retry metadata, and a reviewed live D1/R2 importer. Complete v2 backup and isolated offline recovery preserve content and history but do not supply the original attachment retry state or a live full-state migration. Portable imports create copies with new IDs and do not satisfy these migration gates.
 
 Documentation and tool descriptions confer no access. External agents default to read-only; an agent name or successful identity-provider signup does not grant board permissions. Verify the actual deployment/client OAuth flow on synthetic data before accessing real records.
