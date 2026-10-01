@@ -44,7 +44,7 @@ Configure these **environment secrets** separately:
 | `CLOUDFLARE_API_TOKEN` | Approved deployment identity for this account: Worker scripts deployment/secrets, D1 schema migration, and read access to the R2 bucket/domain configuration and account Workers subdomain |
 | `WORKOS_API_KEY` | Production environment key for authoritative user and linked-identity lookup |
 | `TASK_BOARD_SESSION_SECRET` | Stable, 32 random bytes encoded as 43 unpadded base64url characters |
-| `TASK_BOARD_AUTH_POLICY` | Valid one-line JSON policy explicitly binding verified immutable Google/GitHub provider IDs and WorkOS user IDs to the authorized existing storage owner |
+| `TASK_BOARD_AUTH_POLICY` | Valid one-line JSON policy explicitly binding verified immutable provider IDs, WorkOS user IDs and allowed email to the authorized existing storage owner; optional owner `agentAccess: "write"` delegates consented-agent writes while explicit client restrictions and the global freeze still apply |
 
 Keep this Cloudflare token scoped to the approved account with the narrowest permissions supported for these operations. Routine releases need no R2 object upload, object deletion, DNS changes, or account/bucket/database creation. Initial migration uses its separately authorized data-transfer credentials and procedure.
 
