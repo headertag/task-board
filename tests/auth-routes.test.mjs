@@ -29,6 +29,11 @@ const policy = {
     { clientId: 'synthetic-write-client', access: 'write', writeScope: 'tasks:write' },
   ],
 };
+function delegatedPolicy() {
+  return { ...structuredClone(policy), owners: policy.owners.map(owner => owner.ownerId === ownerA
+    ? { ...owner, agentAccess: 'write', identities: owner.identities.map(identity => ({ ...identity, workosUserId: 'user_synthetic_a' })) }
+    : structuredClone(owner)) };
+}
 const originalUsers = {
   user_synthetic_a: { id: 'user_synthetic_a', email: 'owner-a@example.com', email_verified: true, name: 'Synthetic Owner A' },
   user_synthetic_b: { id: 'user_synthetic_b', email: 'owner-b@example.com', email_verified: true, name: 'Synthetic Owner B' },
@@ -414,6 +419,75 @@ test('read-only MCP tools are filtered and OIDC or write-looking strings never g
   for (const key of ['tasks', 'history', 'comments', 'commentHistory', 'attachments']) assert.deepEqual(afterExport[key], before[key]);
 });
 
+test('owner-delegated DCR/CIMD agents discover writes and create/edit/archive tasks and comments through real routes', async () => {
+  globalThis.__authRouteEnv.TASK_BOARD_AUTH_POLICY = JSON.stringify(delegatedPolicy());
+  for (const [index, client_id] of ['dynamic-unknown-client', 'https://client.example.com/client.json'].entries()) {
+    const headers = bearer(await token({ client_id, scope: 'openid profile email' }));
+    const listed = await mcp.POST(rpcRequest('tools/list', null, headers));
+    const names = (await listed.json()).result.tools.map(tool => tool.name);
+    for (const name of ['create_task', 'update_task', 'complete_task', 'archive_task', 'restore_task', 'add_comment', 'edit_comment', 'archive_comment', 'restore_comment', 'import_tasks']) assert.ok(names.includes(name), name);
+    const created = await rpcValue(await rpcCall('create_task', { task: { title: 'Synthetic delegated task ' + index }, requestKey: 'delegated-create-' + index }, headers));
+    const task = created.task;
+    const edit = { id: task.id, expectedRevision: task.revision, patch: { title: 'Synthetic delegated edit ' + index }, requestKey: 'delegated-edit-' + index };
+    const editedResponse = await apiCall('update_task', edit, headers);
+    assert.equal(editedResponse.status, 200);
+    const edited = (await editedResponse.json()).task;
+    assert.equal(edited.revision, 2);
+    assert.deepEqual((await rpcValue(await rpcCall('update_task', edit, headers))).task, edited);
+    assert.equal((await serviceA.history(task.id)).filter(event => event.action === 'update').length, 1);
+    await denied(await apiCall('update_task', { ...edit, patch: { title: 'Different retry' } }, headers), 409, 'idempotency_conflict');
+    let comment = (await rpcValue(await rpcCall('add_comment', { taskId: task.id, body: 'Synthetic delegated comment', requestKey: 'delegated-comment-' + index }, headers))).comment;
+    const commentEdit = await apiCall('edit_comment', { id: comment.id, expectedRevision: comment.revision, body: 'Synthetic delegated comment edit', requestKey: 'delegated-comment-edit-' + index }, headers);
+    assert.equal(commentEdit.status, 200);
+    comment = (await commentEdit.json()).comment;
+    comment = (await rpcValue(await rpcCall('archive_comment', { id: comment.id, expectedRevision: comment.revision, requestKey: 'delegated-comment-remove-' + index }, headers))).comment;
+    assert.equal(comment.archived, true);
+    const archived = (await rpcValue(await rpcCall('archive_task', { id: task.id, expectedRevision: edited.revision, requestKey: 'delegated-archive-' + index }, headers))).task;
+    assert.equal(archived.archived, true);
+    assert.equal(archived.revision, 3);
+    await denied(await apiCall('update_task', { id: taskB.id, expectedRevision: taskB.revision, patch: { title: 'Cross-owner denied' }, requestKey: 'delegated-cross-owner-' + index }, headers), 404, 'not_found');
+  }
+});
+
+test('owner delegation cannot bypass explicit client rules, owner isolation or the verified identity admission rule', async () => {
+  globalThis.__authRouteEnv.TASK_BOARD_AUTH_POLICY = JSON.stringify(delegatedPolicy());
+  for (const claims of [
+    { client_id: 'synthetic-read-client', scope: 'openid tasks:write' },
+    { client_id: 'synthetic-write-client', scope: 'openid profile email' },
+    { client_id: 'synthetic-write-client', scope: 'tasks:write-extra' },
+    { sub: 'user_synthetic_b', client_id: 'dynamic-unknown-client', owner: ownerA },
+  ]) {
+    const headers = bearer(await token(claims));
+    await denied(await rpcCall('create_task', { task: { title: 'Denied delegate' }, requestKey: 'delegated-rule-denied' }, headers), 403, 'permission_denied');
+    await denied(await apiCall('create_task', { task: { title: 'Denied delegate' }, requestKey: 'delegated-rule-denied' }, headers), 403, 'permission_denied');
+  }
+  const unapproved = bearer(await token({ sub: 'user_unapproved', client_id: 'dynamic-unknown-client', email: 'owner-a@example.com', owner: ownerA }));
+  await denied(await rpcCall('create_task', {}, unapproved), 403, 'identity_not_allowed');
+  users.user_synthetic_a.email_verified = false;
+  await denied(await apiCall('create_task', {}, bearer(await token({ client_id: 'dynamic-unknown-client' }))), 403, 'identity_not_allowed');
+});
+
+test('the same delegated token loses mutations on owner revocation, client restriction or global freeze while reads remain available', async () => {
+  const approved = delegatedPolicy();
+  globalThis.__authRouteEnv.TASK_BOARD_AUTH_POLICY = JSON.stringify(approved);
+  const headers = bearer(await token({ client_id: 'dynamic-unknown-client' }));
+  assert.equal((await getBoardPrincipal(new Request(origin + '/api/board', { headers }))).canWrite, true);
+  const restricted = structuredClone(approved); restricted.clients.push({ clientId: 'dynamic-unknown-client', access: 'read' });
+  const revoked = structuredClone(approved); revoked.owners[0].agentAccess = 'read';
+  for (const [activePolicy, flag] of [[restricted, 'false'], [revoked, 'false'], [approved, 'true'], [approved, undefined]]) {
+    globalThis.__authRouteEnv.TASK_BOARD_AUTH_POLICY = JSON.stringify(activePolicy);
+    if (flag === undefined) delete globalThis.__authRouteEnv.TASK_BOARD_READ_ONLY;
+    else globalThis.__authRouteEnv.TASK_BOARD_READ_ONLY = flag;
+    assert.equal((await getBoardPrincipal(new Request(origin + '/api/board', { headers }))).canWrite, false);
+    const tools = await mcp.POST(rpcRequest('tools/list', null, headers));
+    assert.ok(!(await tools.json()).result.tools.some(tool => tool.name === 'create_task'));
+    await denied(await apiCall('create_task', { task: { title: 'Denied frozen delegate' }, requestKey: 'delegated-freeze-denied' }, headers), 403, 'permission_denied');
+    await denied(await rpcCall('create_task', { task: { title: 'Denied frozen delegate' }, requestKey: 'delegated-freeze-denied' }, headers), 403, 'permission_denied');
+    await denied(await images.POST(new Request(origin + '/api/images', { method: 'POST', headers: { ...headers, 'content-type': 'image/png', 'x-task-id': taskA.id, 'x-upload-key': 'delegated-image-denied' }, body: png })), 403, 'permission_denied');
+    assert.equal((await apiCall('get_task', { id: taskA.id }, headers)).status, 200);
+  }
+});
+
 test('cryptographic token negatives fail at every protected route before authoritative identity lookup', async () => {
   const now = Math.floor(Date.now() / 1000);
   const invalid = [
@@ -608,7 +682,7 @@ test('migration capture requires an explicit source freeze even for an approved 
 test('explicitly frozen migration captures remain read-scope operations with browser/API/MCP owner and retry fidelity', async () => {
   const session = await browserSession();
   globalThis.__authRouteEnv.TASK_BOARD_READ_ONLY = 'true';
-  const expectedTasks = (await serviceA.list()).map(task => task.id).sort();
+  const expectedTasks = [...await serviceA.list(), ...await serviceA.list(true)].map(task => task.id).sort();
   for (const headers of [
     bearer(await token()),
     bearer(await token({ client_id: 'dynamic-unknown-client', scope: 'openid profile email' })),

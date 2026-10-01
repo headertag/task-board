@@ -12,7 +12,7 @@ export type IdentityRule = {
 };
 export type AuthPolicy = {
   version: 1;
-  owners: { ownerId: string; identities: IdentityRule[] }[];
+  owners: { ownerId: string; identities: IdentityRule[]; agentAccess?: 'read' | 'write' }[];
   clients: { clientId: string; access: 'read' | 'write'; writeScope?: string }[];
 };
 export type AuthBindings = {
@@ -98,7 +98,8 @@ export function readAuthConfig(bindings: AuthBindings): AuthConfig {
   const ownerIds = new Set<string>();
   const selectors = new Set<string>();
   const owners = raw.owners.map(owner => {
-    if (!record(owner) || !keysAre(owner, ['ownerId', 'identities']) || !nonempty(owner.ownerId, 200) ||
+    if (!record(owner) || !keysAre(owner, ['ownerId', 'identities', 'agentAccess']) || !nonempty(owner.ownerId, 200) ||
+      (owner.agentAccess !== undefined && owner.agentAccess !== 'read' && owner.agentAccess !== 'write') ||
       ownerIds.has(owner.ownerId) || !Array.isArray(owner.identities) || owner.identities.length === 0 || owner.identities.length > 100) {
       return configurationError();
     }
@@ -125,7 +126,10 @@ export function readAuthConfig(bindings: AuthBindings): AuthConfig {
       selectors.add(selector);
       return rule;
     });
-    return { ownerId: owner.ownerId, identities };
+    // Delegating writes to consented dynamic clients requires immutable owner pins.
+    if (owner.agentAccess === 'write' && identities.some(rule => !rule.providerId || !rule.workosUserId)) return configurationError();
+    return { ownerId: owner.ownerId, identities,
+      ...(owner.agentAccess !== undefined ? { agentAccess: owner.agentAccess as 'read' | 'write' } : {}) };
   });
   const clientIds = new Set<string>();
   const clients = raw.clients.map(client => {
@@ -185,7 +189,7 @@ export async function authenticateBearer(headers: Headers, config: AuthConfig, d
   const match = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i.exec(authorization);
   if (!match) return invalidToken();
   const claims = await verifyToken(match[1], config, config.audience, dependencies);
-  if (!nonempty(claims.client_id, 2048) || /\s/.test(claims.client_id) ||
+  if (claims.aud !== config.audience || !nonempty(claims.client_id, 2048) || /\s/.test(claims.client_id) ||
     !nonempty(claims.sid, 200) ||
     (claims.scope !== undefined && typeof claims.scope !== 'string')) return invalidToken();
   return authorizeWorkosUser(claims.sub!, config, {
@@ -282,8 +286,11 @@ export async function authorizeWorkosUser(workosUserId: string, config: AuthConf
   if (context.kind === 'connect') {
     if (!nonempty(context.clientId, 2048) || !nonempty(context.consentId, 200)) return invalidToken();
     const client = config.policy.clients.find(candidate => candidate.clientId === context.clientId);
-    // Dynamic clients' standard OIDC scopes do not grant task mutations.
-    canWrite = client?.access === 'write' && Boolean(client.writeScope && context.scopes.includes(client.writeScope));
+    // Explicit client rules take precedence over the owner's dynamic-client delegation.
+    // OIDC scopes and caller-supplied permission labels never grant task mutations.
+    canWrite = client
+      ? client.access === 'write' && Boolean(client.writeScope && context.scopes.includes(client.writeScope))
+      : matches[0].agentAccess === 'write';
   }
   return {
     ownerId, userId: ownerId, workosUserId: user.id, email: user.email,

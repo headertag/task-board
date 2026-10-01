@@ -16,6 +16,7 @@ The following values are placeholders and must identify the approved existing pr
 TASK_BOARD_MIGRATION_FILE=/private/task-board/owner-v3.json \
 CLOUDFLARE_ACCOUNT_ID=approved-account-id \
 CLOUDFLARE_API_TOKEN_FILE=/private/task-board/cloudflare-token \
+CLOUDFLARE_API_TOKEN_ID=approved-api-token-id \
 TASK_BOARD_D1_DATABASE_ID=approved-database-uuid \
 TASK_BOARD_D1_DATABASE_NAME=task-board-db \
 TASK_BOARD_R2_BUCKET_NAME=task-board-images \
@@ -24,7 +25,9 @@ TASK_BOARD_MIGRATION_APPROVED=true \
 node --experimental-transform-types --import ./tests/loader.mjs scripts/migrate-cloudflare.mjs
 ```
 
-The credential file contains only the already authorized Cloudflare bearer token, optionally followed by a newline. Alternatively supply `CLOUDFLARE_API_TOKEN` through a private environment; never set both sources. Do not put credentials in command-line arguments, source control or logs. Use the narrowest approved access that supports inspecting the named Worker/account subdomain, D1 queries, and private R2 bucket/domain/object operations. This command creates no account, access grant, database, bucket or production identity.
+The credential file contains only the already authorized Cloudflare bearer token, optionally followed by a newline. Alternatively supply `CLOUDFLARE_API_TOKEN` through a private environment; never set both sources. `CLOUDFLARE_API_TOKEN_ID` is the token's exact 32-character hexadecimal ID from its approved creation record, distinct from the account ID. It is required for signed S3 requests. Do not put credentials in command-line arguments, source control or logs. Use the narrowest approved access that supports inspecting the named Worker/account subdomain, D1 queries, and private R2 bucket/domain/object operations. This command creates no account, access grant, database, bucket or production identity.
+
+Metadata inspection and D1 use Cloudflare's account REST API. Image GET and atomic create-only PUT use `https://<approved-account-id>.r2.cloudflarestorage.com` with AWS Signature V4, region `auto`, and a signed `If-None-Match: *` condition on PUT. Cloudflare documents the S3 access key as the API token ID and its secret as SHA-256 of the token value; the importer derives this secret only in memory from the same approved token. It does not create another key or broaden that token's permissions. Both transports reject redirects or changed response URLs. Jurisdiction-specific buckets need a separately reviewed endpoint configuration; this importer addresses the named default-jurisdiction bucket. [R2 authentication](https://developers.cloudflare.com/r2/api/tokens/), [S3 compatibility](https://developers.cloudflare.com/r2/api/s3/api/).
 
 `TASK_BOARD_STORAGE_OWNER` is optional. When omitted, the owner comes only from the locally verified v3 manifest. When supplied, it must match that manifest exactly. A different or empty owner fails before any remote request. The capture may be the private `{format:"task-board-local-backup",version:3,pages:[...]}` wrapper or its complete page array.
 
@@ -42,9 +45,9 @@ Success reports counts, the capture digest internally, the production MCP URL an
 
 ## Hosted R2 gate
 
-The R2 object GET/PUT endpoint and `cf-r2-data-catalog-check` header match the locked Wrangler implementation. PUT additionally sends `If-None-Match: *`; a `412` response triggers readback verification rather than being assumed successful. The synthetic transport tests prove this handling, but do not establish that Cloudflare's hosted account API honors that precondition.
+Do not use the Dashboard/Wrangler account REST object PUT endpoint for atomic overwrite protection: a hosted fictional probe accepted a conflicting PUT despite `If-None-Match: *` and replaced the fictional bytes. The importer uses the documented S3 conditional PUT interface instead. A `412` response triggers exact readback verification rather than being assumed successful. [Cloudflare's S3 compatibility reference](https://developers.cloudflare.com/r2/api/s3/api/) lists conditional operations for `PutObject`; its [REST Upload Object reference](https://developers.cloudflare.com/api/resources/r2/subresources/buckets/subresources/objects/methods/upload/) does not specify write preconditions.
 
-Before real-data transfer, test the actual approved private bucket with fictional PNGs: verify initial upload/readback, an existing-object precondition with different bytes, and unchanged original bytes after refusal. Record only fixture IDs/hashes and results privately. If hosted conditional behavior differs, resolve the storage write procedure before relying on atomic overwrite protection. The importer already refuses known conflicts and requires a frozen target plus the same-capture marker; those checks do not prove an unverified vendor precondition.
+Before real-data transfer, test the actual approved private bucket through the signed S3 interface with fictional PNGs in a unique `migration-fixtures/` namespace. Verify a missing-key GET, initial conditional upload/readback, a changed-input conditional PUT returning `412`, and unchanged original bytes after refusal. Recheck the named frozen/private target before each write. Record only fixture IDs/hashes and results privately. A hosted signed-S3 probe established this behavior for the approved installation; another target or credential still needs its own gate. Any mismatch blocks real migration. Never weaken the condition, fall back to REST uploads, or treat a frozen target and same-capture marker as substitutes for atomic create-only semantics.
 
 Run the no-network SQL/transport tests with:
 
@@ -52,4 +55,4 @@ Run the no-network SQL/transport tests with:
 node --experimental-transform-types --import ./tests/loader.mjs tests/cloudflare-migration.test.mjs
 ```
 
-These tests cover exact record/image/retry preservation, uncertain partial-write resume, complete reruns, unrelated owners, nonempty targets, capture/owner/version refusal before remote access, object conflicts, write-lock changes, full paginated readback, marker corruption, redirects, network failures and private file constraints. Live account/OAuth/TLS/client acceptance remains a separate gate.
+These tests cover exact record/image/retry preservation, uncertain partial-write resume, complete reruns, unrelated owners, nonempty targets, capture/owner/version refusal before remote access, object conflicts, write-lock changes, full paginated readback, marker corruption, redirects, network failures, private file constraints, explicit token IDs and AWS's published Signature V4 golden example. Live account/OAuth/TLS/client acceptance remains a separate gate.

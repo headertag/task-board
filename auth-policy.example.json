@@ -3,6 +3,7 @@
   "owners": [
     {
       "ownerId": "synthetic-existing-storage-owner",
+      "agentAccess": "read",
       "identities": [
         { "provider": "google", "email": "owner@example.com", "providerId": "synthetic-google-subject", "workosUserId": "user_synthetic_google" },
         { "provider": "github", "providerId": "123456789", "workosUserId": "user_synthetic_github" }

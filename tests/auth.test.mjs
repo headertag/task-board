@@ -29,6 +29,9 @@ const configFor = (value = policy, values = {}) => readAuthConfig({
   ...values,
 });
 const config = configFor();
+const delegatedPolicy = () => ({ ...structuredClone(policy), owners: policy.owners.map(owner => owner.ownerId === 'legacy-owner-synthetic-a'
+  ? { ...owner, agentAccess: 'write', identities: owner.identities.map(identity => ({ ...identity, workosUserId: 'user_synthetic_a' })) }
+  : structuredClone(owner)) });
 const profiles = {
   user_synthetic_a: { id: 'user_synthetic_a', email: 'Allowed@Example.com', email_verified: true, name: 'Synthetic Owner A' },
   user_synthetic_b: { id: 'user_synthetic_b', email: 'unverified@example.com', email_verified: false },
@@ -93,6 +96,77 @@ test('write requires an explicitly configured client and a granted custom consen
   for (const [scope, expected] of [['openid profile email', false], ['openid tasks:write', true], ['tasks:write-extra', false]]) {
     const principal = await authenticateBearer(headersFor(await token({ client_id: 'synthetic-write-client', scope })), config, workosMock().dependencies);
     assert.equal(principal.canWrite, expected);
+  }
+});
+
+test('an explicitly pinned owner can delegate writes to consented DCR/CIMD clients without a custom scope', async () => {
+  for (const client_id of ['dynamic-unknown-client', 'https://client.example.com/client.json']) {
+    const principal = await authenticateBearer(headersFor(await token({ client_id, scope: 'openid profile email' })), configFor(delegatedPolicy()), workosMock().dependencies);
+    assert.equal(principal.ownerId, 'legacy-owner-synthetic-a');
+    assert.equal(principal.canWrite, true);
+    requirePermission(principal, 'write');
+  }
+  const otherOwner = await authenticateBearer(headersFor(await token({ sub: 'user_synthetic_b', client_id: 'dynamic-unknown-client' })), configFor(delegatedPolicy()), workosMock().dependencies);
+  assert.equal(otherOwner.ownerId, 'synthetic-owner-b');
+  assert.equal(otherOwner.canWrite, false, 'Delegation belongs only to the matched owner');
+});
+
+test('explicit client restrictions take precedence over owner-level agent writes', async () => {
+  for (const [client_id, scope, expected] of [
+    ['synthetic-read-client', 'openid tasks:write', false],
+    ['synthetic-write-client', 'openid profile email', false],
+    ['synthetic-write-client', 'tasks:write-extra', false],
+    ['synthetic-write-client', 'openid tasks:write', true],
+  ]) {
+    const principal = await authenticateBearer(headersFor(await token({ client_id, scope })), configFor(delegatedPolicy()), workosMock().dependencies);
+    assert.equal(principal.canWrite, expected, client_id + ':' + scope);
+  }
+});
+
+test('delegation is reevaluated per request and cannot override authoritative identity pins', async () => {
+  const jwtHeaders = headersFor(await token({ client_id: 'dynamic-unknown-client', agentAccess: 'write', permissions: ['write'] }));
+  const approved = delegatedPolicy();
+  assert.equal((await authenticateBearer(jwtHeaders, configFor(approved), workosMock().dependencies)).canWrite, true);
+  approved.owners[0].agentAccess = 'read';
+  assert.equal((await authenticateBearer(jwtHeaders, configFor(approved), workosMock().dependencies)).canWrite, false);
+  for (const changes of [
+    { users: { ...profiles, user_synthetic_a: { ...profiles.user_synthetic_a, email_verified: false } } },
+    { social: { ...identities, user_synthetic_a: [{ type: 'OAuth', provider: 'GoogleOAuth', idp_id: 'different-provider-id' }] } },
+  ]) await assert.rejects(() => authenticateBearer(jwtHeaders, configFor(delegatedPolicy()), workosMock(changes.users, changes.social).dependencies), statusIs(403, 'identity_not_allowed'));
+  const sameEmailOtherUser = { ...profiles, user_unapproved: { ...profiles.user_unapproved, email: profiles.user_synthetic_a.email } };
+  const sameProviderOtherUser = { ...identities, user_unapproved: structuredClone(identities.user_synthetic_a) };
+  await assert.rejects(async () => authenticateBearer(headersFor(await token({ sub: 'user_unapproved', client_id: 'dynamic-unknown-client' })),
+    configFor(delegatedPolicy()), workosMock(sameEmailOtherUser, sameProviderOtherUser).dependencies), statusIs(403, 'identity_not_allowed'));
+});
+
+test('delegated writes still require a valid signed single-resource user token with client and consent', async () => {
+  const approved = configFor(delegatedPolicy());
+  for (const patch of [
+    { aud: [audience] }, { aud: [audience, 'https://other.example.com/mcp'] }, { aud: 'https://other.example.com/mcp' },
+    { iss: 'https://other.example.authkit.app' }, { sid: undefined }, { client_id: undefined }, { client_id: 'white space' },
+    { sub: 'client_machine' }, { exp: now }, { act: { sub: 'user_synthetic_a' } },
+  ]) {
+    const mock = workosMock();
+    await assert.rejects(async () => authenticateBearer(headersFor(await token({ client_id: 'dynamic-unknown-client', ...patch })), approved, mock.dependencies), statusIs(401, 'invalid_token'));
+    assert.equal(mock.requests.length, 0);
+  }
+  const wrongKey = (await generateKeyPair('RS256')).privateKey;
+  const mock = workosMock();
+  await assert.rejects(async () => authenticateBearer(headersFor(await token({ client_id: 'dynamic-unknown-client' }, wrongKey)), approved, mock.dependencies), statusIs(401, 'invalid_token'));
+  assert.equal(mock.requests.length, 0);
+});
+
+test('agentAccess defaults to read and rejects malformed or unpinned write delegation', () => {
+  assert.equal(configFor().policy.owners[0].agentAccess, undefined);
+  const read = structuredClone(policy); read.owners[0].agentAccess = 'read';
+  assert.equal(configFor(read).policy.owners[0].agentAccess, 'read');
+  for (const value of [null, true, false, 'WRITE', 'admin', 0]) {
+    const invalid = delegatedPolicy(); invalid.owners[0].agentAccess = value;
+    assert.throws(() => configFor(invalid), statusIs(503, 'auth_not_configured'));
+  }
+  for (const field of ['providerId', 'workosUserId']) {
+    const invalid = delegatedPolicy(); delete invalid.owners[0].identities[0][field];
+    assert.throws(() => configFor(invalid), statusIs(503, 'auth_not_configured'));
   }
 });
 

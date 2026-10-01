@@ -3,8 +3,9 @@ import {open, lstat} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {createHash,createHmac} from 'node:crypto';
 import {validateBackup} from '../lib/backup.ts';
-import {normalizePng} from '../lib/image.ts';
+import {normalizePng,boundedBytes,IMAGE_LIMIT} from '../lib/image.ts';
 import {hash, stable, stableId} from '../lib/safety.ts';
 
 export class MigrationError extends Error {
@@ -49,6 +50,7 @@ export async function prepareMigration(pages, suppliedOwner) {
 
 function configuration(options) {
   if (options.approved!==true || !/^[a-f0-9]{32}$/i.test(options.accountId??'') || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(options.databaseId??'') ||
+      !/^[a-f0-9]{32}$/i.test(options.apiTokenId??'') || options.apiTokenId===options.accountId ||
       options.databaseId==='00000000-0000-4000-8000-000000000000' || !/^[A-Za-z0-9_-]{1,64}$/.test(options.databaseName??'') || !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(options.bucketName??'')) stop('configuration');
   let origin; try { origin=new URL(options.origin); } catch { stop('configuration'); }
   if (origin.protocol!=='https:' || origin.username || origin.password || origin.pathname!=='/' || origin.search || origin.hash ||
@@ -56,9 +58,31 @@ function configuration(options) {
   return origin.origin;
 }
 
-/** The transport uses the same account APIs as the locked Wrangler CLI. */
+/** AWS Signature V4 for a single S3 request; credentials remain in memory. */
+export function signedR2Request(url,{accessKeyId,secretAccessKey,method='GET',body,now=new Date(),region='auto',range}) {
+  const target=new URL(url);
+  if (target.protocol!=='https:' || target.username || target.password || target.search || target.hash ||
+      !/^[A-Za-z0-9_-]{1,200}$/.test(accessKeyId??'') || typeof secretAccessKey!=='string' || !secretAccessKey || /[\s\x00-\x1f\x7f]/.test(secretAccessKey) ||
+      !['GET','PUT'].includes(method) || !/^[a-z0-9-]{1,32}$/.test(region) || !(now instanceof Date) || !Number.isFinite(now.getTime()) ||
+      range!==undefined&&(method!=='GET'||!/^bytes=\d+-\d+$/.test(range))) stop('credentials');
+  const digest=value=>createHash('sha256').update(value).digest('hex');
+  const hmac=(key,value)=>createHmac('sha256',key).update(value).digest();
+  const stamp=now.toISOString().replace(/[:-]|\.\d{3}/g,''),date=stamp.slice(0,8),scope=`${date}/${region}/s3/aws4_request`;
+  const headers={host:target.host,'x-amz-content-sha256':digest(body??new Uint8Array()),'x-amz-date':stamp,
+    ...(method==='PUT'?{'content-type':'image/png','if-none-match':'*'}:{}),...(range?{range}:{})};
+  const names=Object.keys(headers).sort(),signed=names.join(';'),canonicalHeaders=names.map(name=>`${name}:${headers[name]}\n`).join('');
+  const canonical=[method,target.pathname,'',canonicalHeaders,signed,headers['x-amz-content-sha256']].join('\n');
+  const key=hmac(hmac(hmac(hmac('AWS4'+secretAccessKey,date),region),'s3'),'aws4_request');
+  const signature=createHmac('sha256',key).update(`AWS4-HMAC-SHA256\n${stamp}\n${scope}\n${digest(canonical)}`).digest('hex');
+  headers.authorization=`AWS4-HMAC-SHA256 Credential=${accessKeyId}/${scope}, SignedHeaders=${signed}, Signature=${signature}`;
+  return {method,redirect:'manual',headers,...(body?{body}:{}),signal:AbortSignal.timeout(30000)};
+}
+
+/** Account inspection/D1 use REST. Atomic object creation uses R2's S3 API. */
 export function cloudflareTransport(options, fetcher=fetch) {
-  if (typeof options.apiToken!=='string' || !options.apiToken || options.apiToken.length>16384 || /[\s\x00-\x1f\x7f]/.test(options.apiToken)) stop('credentials');
+  if (typeof options.apiToken!=='string' || !options.apiToken || options.apiToken.length>16384 || /[\s\x00-\x1f\x7f]/.test(options.apiToken) ||
+      !/^[a-f0-9]{32}$/i.test(options.apiTokenId??'') || options.apiTokenId===options.accountId || !/^[a-f0-9]{32}$/i.test(options.accountId??'') ||
+      !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(options.bucketName??'')) stop('credentials');
   const base=`https://api.cloudflare.com/client/v4/accounts/${options.accountId}`;
   async function request(url, init={}, binary=false, missing=false) {
     let response;
@@ -72,7 +96,20 @@ export function cloudflareTransport(options, fetcher=fetch) {
     if (body?.success!==true) stop('remote_response');
     return body.result;
   }
-  const objectUrl=key=>`${base}/r2/buckets/${options.bucketName}/objects/${key.split('/').map(encodeURIComponent).join('/')}`;
+  // Cloudflare defines the S3 access key as the API token ID and secret as SHA-256(token).
+  const secretAccessKey=createHash('sha256').update(options.apiToken).digest('hex');
+  const objectUrl=key=>{
+    if (typeof key!=='string' || key.startsWith('/') || key.split('/').some(part=>!part||part==='.'||part==='..') || /[\x00-\x1f\x7f]/.test(key)) stop('configuration');
+    const encode=part=>encodeURIComponent(part).replace(/[!'()*]/g,char=>'%'+char.charCodeAt(0).toString(16).toUpperCase());
+    return `https://${options.accountId}.r2.cloudflarestorage.com/${options.bucketName}/${key.split('/').map(encode).join('/')}`;
+  };
+  async function objectRequest(key,method,body) {
+    const url=objectUrl(key);let response;
+    try { response=await fetcher(url,signedR2Request(url,{accessKeyId:options.apiTokenId,secretAccessKey,method,body})); }
+    catch { stop(method==='PUT'?'object_upload':'remote_request'); }
+    if (response.redirected || response.url&&response.url!==url || response.status>=300&&response.status<400) stop('remote_redirect');
+    return response;
+  }
   return {
     async inspect() {
       const db=await request(`${base}/d1/database/${options.databaseId}`);
@@ -94,13 +131,16 @@ export function cloudflareTransport(options, fetcher=fetch) {
       if (!Array.isArray(result)||result.some(r=>r?.success!==true || r.results!==undefined&&!Array.isArray(r.results))) stop('remote_response');
       return result.flatMap(r=>r.results??[]);
     },
-    getObject:key=>request(objectUrl(key),{},true,true),
+    async getObject(key) {
+      const response=await objectRequest(key,'GET');
+      if (response.status===404) { await response.body?.cancel();return null; }
+      if (!response.ok) stop(response.status===401||response.status===403?'remote_authorization':'remote_request');
+      if (!response.body) stop('remote_response');
+      try { return await boundedBytes(response.body,IMAGE_LIMIT); } catch { stop('remote_response'); }
+    },
     async putObject(key,bytes) {
-      // Never knowingly replace an object. Destination application remains frozen.
-      let response;
-      try { response=await fetcher(objectUrl(key),{method:'PUT',redirect:'manual',headers:{Authorization:`Bearer ${options.apiToken}`,'Content-Type':'image/png','If-None-Match':'*','cf-r2-data-catalog-check':'true'},body:bytes,signal:AbortSignal.timeout(30000)}); }
-      catch { stop('object_upload'); }
-      if (response.redirected || response.url&&response.url!==objectUrl(key)||response.status>=300&&response.status<400) stop('remote_redirect');
+      // REST object PUT ignores this condition; signed S3 PUT honors atomic create-only.
+      const response=await objectRequest(key,'PUT',bytes);
       if (!response.ok&&response.status!==412) stop('object_upload');
       await response.body?.cancel();
     },
@@ -208,7 +248,7 @@ export async function migrationOptionsFromEnvironment(env=process.env) {
   if (!!env.CLOUDFLARE_API_TOKEN===!!env.CLOUDFLARE_API_TOKEN_FILE) stop('credentials');
   const apiToken=env.CLOUDFLARE_API_TOKEN??(await privateFile(env.CLOUDFLARE_API_TOKEN_FILE,16384)).trim();
   return {pages:captured.pages??captured,owner:env.TASK_BOARD_STORAGE_OWNER,apiToken,
-    accountId:env.CLOUDFLARE_ACCOUNT_ID,databaseId:env.TASK_BOARD_D1_DATABASE_ID,databaseName:env.TASK_BOARD_D1_DATABASE_NAME,
+    apiTokenId:env.CLOUDFLARE_API_TOKEN_ID,accountId:env.CLOUDFLARE_ACCOUNT_ID,databaseId:env.TASK_BOARD_D1_DATABASE_ID,databaseName:env.TASK_BOARD_D1_DATABASE_NAME,
     bucketName:env.TASK_BOARD_R2_BUCKET_NAME,origin:env.TASK_BOARD_PRODUCTION_ORIGIN,approved:env.TASK_BOARD_MIGRATION_APPROVED==='true'};
 }
 if (process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
