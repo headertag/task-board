@@ -1,19 +1,39 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
 
 function ensure(condition, message) { if (!condition) throw new Error(message); }
-export async function smokeProduction({ origin, audience = origin + '/mcp', issuer }, request = fetch) {
-  async function get(route, options = {}) {
+const transientDiscoveryStatuses = new Set([404, 429, 502, 503, 504]);
+export async function smokeProduction({ origin, audience = origin + '/mcp', issuer }, request = fetch, {
+  now = () => performance.now(), wait = delay, readinessTimeoutMs = 60_000, retryDelayMs = 2000,
+} = {}) {
+  ensure(Number.isSafeInteger(readinessTimeoutMs) && readinessTimeoutMs > 0 && readinessTimeoutMs <= 60_000 &&
+    Number.isSafeInteger(retryDelayMs) && retryDelayMs > 0, 'Invalid production readiness retry configuration');
+  // Both public discovery documents share one budget, including request time.
+  const readinessDeadline = now() + readinessTimeoutMs;
+  async function get(route, options = {}, timeoutMs = 15000) {
     const url = new URL(route, origin).href;
-    const response = await request(url, { ...options, redirect: 'manual', signal: AbortSignal.timeout(15000) });
+    const response = await request(url, { ...options, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
     ensure(!response.redirected && (!response.url || response.url === url), 'Smoke check rejected a changed response URL');
     return response;
   }
-  const resourceResponse = await get('/.well-known/oauth-protected-resource/mcp');
+  async function discovery(route, name) {
+    for (;;) {
+      const remaining = readinessDeadline - now();
+      ensure(remaining > 0, `${name} is unavailable after the production readiness budget`);
+      const response = await get(route, {}, Math.max(1, Math.ceil(Math.min(15000, remaining))));
+      if (!transientDiscoveryStatuses.has(response.status)) return response;
+      await response.body?.cancel();
+      const remainingAfterRequest = readinessDeadline - now();
+      ensure(remainingAfterRequest > 0, `${name} is unavailable after the production readiness budget`);
+      await wait(Math.min(retryDelayMs, remainingAfterRequest));
+    }
+  }
+  const resourceResponse = await discovery('/.well-known/oauth-protected-resource/mcp', 'Protected-resource discovery');
   ensure(resourceResponse.status === 200, 'Protected-resource discovery is unavailable');
   const resource = await resourceResponse.json();
   ensure(resource.resource === audience && JSON.stringify(resource.authorization_servers) === JSON.stringify([issuer]), 'Production resource or issuer discovery does not match configuration');
-  const serverResponse = await get('/.well-known/oauth-authorization-server');
+  const serverResponse = await discovery('/.well-known/oauth-authorization-server', 'Authorization-server discovery');
   ensure(serverResponse.status === 200, 'Authorization-server discovery is unavailable');
   const server = await serverResponse.json();
   ensure(server.issuer === issuer && server.code_challenge_methods_supported?.includes('S256'), 'Production authorization metadata lacks the approved issuer or PKCE');

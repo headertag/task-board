@@ -238,3 +238,99 @@ test('credential-free deployment smoke verifies production discovery and anonymo
     { '/': () => new Response(null, { status: 307, headers: { Location: 'https://wrong.invalid/signin' } }) },
   ]) await assert.rejects(smokeProduction(settings, smokeRequest(overrides)));
 });
+
+function readinessClock(readinessTimeoutMs = 60_000) {
+  let elapsed = 0;
+  const waits = [];
+  return {
+    waits,
+    advance: ms => { elapsed += ms; },
+    elapsed: () => elapsed,
+    options: { now: () => elapsed, wait: async ms => { waits.push(ms); elapsed += ms; }, readinessTimeoutMs, retryDelayMs: 2000 },
+  };
+}
+
+test('deployment smoke retries only transient public discovery responses before checking protected routes once', async () => {
+  const settings = readProductionEnvironment(environment());
+  const clock = readinessClock();
+  const transient = [404, 429, 502, 503, 504];
+  const calls = new Map();
+  const resourceRoute = '/.well-known/oauth-protected-resource/mcp';
+  const serverRoute = '/.well-known/oauth-authorization-server';
+  const base = smokeRequest();
+  const request = async (url, options) => {
+    const route = new URL(url).pathname;
+    const count = (calls.get(route) ?? 0) + 1;
+    calls.set(route, count);
+    assert.equal(options.redirect, 'manual');
+    assert.equal(options.headers?.Authorization, undefined);
+    if (route === resourceRoute || route === serverRoute) {
+      assert.equal(options.method ?? 'GET', 'GET');
+      const status = route === resourceRoute ? transient[count - 1] : count === 1 ? 503 : undefined;
+      if (status) return new Response('Not ready', { status });
+    }
+    return base(url, options);
+  };
+  assert.equal((await smokeProduction(settings, request, clock.options)).smoke, 'passed');
+  assert.equal(calls.get(resourceRoute), 6);
+  assert.equal(calls.get(serverRoute), 2);
+  for (const route of ['/mcp', '/api/board', '/api/images', '/']) assert.equal(calls.get(route), 1);
+  assert.deepEqual(clock.waits, [2000, 2000, 2000, 2000, 2000, 2000]);
+  assert.equal(clock.elapsed(), 12_000);
+});
+
+test('discovery retries share one bounded readiness budget including request time', async () => {
+  const settings = readProductionEnvironment(environment());
+  const clock = readinessClock(5500);
+  const calls = new Map();
+  const resourceRoute = '/.well-known/oauth-protected-resource/mcp';
+  const serverRoute = '/.well-known/oauth-authorization-server';
+  const base = smokeRequest();
+  const request = async (url, options) => {
+    const route = new URL(url).pathname;
+    const count = (calls.get(route) ?? 0) + 1;
+    calls.set(route, count);
+    clock.advance(250);
+    if ((route === resourceRoute && count === 1) || route === serverRoute) return new Response('Not ready', { status: 503 });
+    return base(url, options);
+  };
+  await assert.rejects(smokeProduction(settings, request, clock.options), /Authorization-server discovery is unavailable after the production readiness budget/);
+  assert.deepEqual(clock.waits, [2000, 2000, 500]);
+  assert.equal(clock.elapsed(), 5500);
+  assert.deepEqual([...calls], [[resourceRoute, 2], [serverRoute, 2]]);
+});
+
+test('discovery security failures and other HTTP statuses fail immediately without readiness retries', async () => {
+  const settings = readProductionEnvironment(environment());
+  const resourceRoute = '/.well-known/oauth-protected-resource/mcp';
+  const serverRoute = '/.well-known/oauth-authorization-server';
+  function changedResponse(property, value) {
+    const response = new Response('Not ready', { status: 503 });
+    Object.defineProperty(response, property, { value });
+    return response;
+  }
+  const cases = [
+    ...[400, 401, 403, 500, 302].map(status => [resourceRoute, () => new Response(null, { status }), /Protected-resource discovery is unavailable/]),
+    [resourceRoute, () => changedResponse('url', 'https://wrong.invalid/discovery'), /changed response URL/],
+    [resourceRoute, () => changedResponse('redirected', true), /changed response URL/],
+    [resourceRoute, () => { throw new Error('Network failure'); }, /Network failure/],
+    [resourceRoute, () => Response.json({ resource: 'https://wrong.invalid/mcp', authorization_servers: [issuer] }), /resource or issuer discovery/],
+    [resourceRoute, () => Response.json({ resource: settings.audience, authorization_servers: ['https://wrong.invalid'] }), /resource or issuer discovery/],
+    [serverRoute, () => Response.json({ ...metadata(), issuer: 'https://wrong.invalid' }), /approved issuer or PKCE/],
+    [serverRoute, () => Response.json({ ...metadata(), code_challenge_methods_supported: ['plain'] }), /approved issuer or PKCE/],
+    [serverRoute, () => Response.json({ ...metadata(), token_endpoint: 'https://wrong.invalid/token' }), /foreign endpoint/],
+    ['/mcp', () => new Response(null, { status: 503 }), /anonymous protected route did not fail closed/],
+    ['/api/board', () => new Response(null, { status: 429 }), /anonymous protected route did not fail closed/],
+    ['/api/images', () => new Response(null, { status: 404 }), /anonymous protected route did not fail closed/],
+    ['/', () => new Response(null, { status: 503 }), /Anonymous browser did not redirect/],
+  ];
+  for (const [route, response, expected] of cases) {
+    const clock = readinessClock();
+    let count = 0;
+    const request = smokeRequest({ [route]: () => { count += 1; return response(); } });
+    await assert.rejects(smokeProduction(settings, request, clock.options), expected);
+    assert.equal(count, 1, route);
+    assert.deepEqual(clock.waits, [], route);
+    assert.equal(clock.elapsed(), 0, route);
+  }
+});
