@@ -20,7 +20,10 @@ async get(id:string){idSchema.parse(id);const r=await this.db.prepare('SELECT pa
 async history(id:string){await this.get(id);const r=await this.db.prepare('SELECT action,before_json,after_json,created_at FROM task_events WHERE owner=? AND task_id=? ORDER BY created_at DESC LIMIT 100').bind(this.owner,id).all<any>();return r.results.map(x=>({action:x.action,before:x.before_json?JSON.parse(x.before_json):null,after:JSON.parse(x.after_json),createdAt:x.created_at}))}
 async replay(key:string,fingerprint:string){const r=await this.db.prepare('SELECT fingerprint,after_json FROM task_events WHERE owner=? AND request_key=?').bind(this.owner,key).first<any>();if(!r)return null;if(r.fingerprint!==fingerprint)throw new AppError(409,'idempotency_conflict','This request key was already used for different input');return taskSchema.parse(JSON.parse(r.after_json))}
 async mutate(action:'create'|'update'|'complete'|'archive'|'restore',args:any){
-const key=keySchema.parse(args.requestKey);const fp=await hash(stable({action,...args}));const prior=await this.replay(key,fp);if(prior)return prior;
+const key=keySchema.parse(args.requestKey);
+// Empty/default lists keep pre-checklist create, seed and import retry fingerprints.
+let fingerprintArgs=args;if(action==='create'&&Array.isArray(args.task?.checklist)&&args.task.checklist.length===0){const {checklist,...task}=args.task;fingerprintArgs={...args,task}}
+const fp=await hash(stable({action,...fingerprintArgs}));const prior=await this.replay(key,fp);if(prior)return prior;
 const now=new Date().toISOString();let before:Task|null=null;let next:Task;
 if(action==='create'){const count=await this.db.prepare('SELECT COUNT(*) as n FROM tasks WHERE owner=?').bind(this.owner).first<{n:number}>();if((count?.n??0)>=100)throw new AppError(400,'pilot_limit','This board supports up to 100 tasks, including Trash');const input=validateTask(args.task);next={...input,id:crypto.randomUUID(),revision:1,createdAt:now,updatedAt:now,archived:false};}
 else{before=await this.get(idSchema.parse(args.id));if(before.revision!==revisionSchema.parse(args.expectedRevision))throw new AppError(409,'revision_conflict','This task changed. Reload it before saving; your draft has not been applied');
