@@ -7,6 +7,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {deflateSync} from 'node:zlib';
+import {DatabaseSync} from 'node:sqlite';
 import {backupLocal, BackupLocalError} from '../scripts/backup-local.mjs';
 import {validateBackup} from '../lib/backup.ts';
 import {taskInput} from '../lib/model.ts';
@@ -28,6 +29,8 @@ function chunk(type, body) {
 const header = new Uint8Array(13); new DataView(header.buffer).setUint32(0, 1); new DataView(header.buffer).setUint32(4, 1); header[8] = 8; header[9] = 6;
 const image = (await normalizePng(Buffer.concat([Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header), chunk('IDAT', deflateSync(Uint8Array.from([0, 255, 0, 0, 255]))), chunk('IEND', new Uint8Array())]))).bytes;
 const task = {...taskInput.parse({title: 'Fictional recovery rehearsal', sample: true}), id: taskId, revision: 1, createdAt: when, updatedAt: when, archived: false};
+// This is a preceding-release wire fixture; do not let new schema defaults rewrite it.
+delete task.checklist;
 const archivedTask = {...task, revision: 2, archived: true};
 const attachment = {id: attachmentId, taskId, filename: 'fictional.png', contentType: 'image/png', size: image.length, width: 1, height: 1, sha256: await hash(image), createdAt: when};
 const retained = {...attachment, id: '44444444-4444-4444-8444-444444444444', filename: 'retained-draft.png'};
@@ -108,6 +111,25 @@ test('complete paginated v2 snapshot is private, exact, and recoverable with unc
   assert.deepEqual(new Uint8Array(await readFile(path.join(recovered.objects, `${retained.id}.png`))), image);
   await rejection(c.options, 'destination'); // A capture never replaces this snapshot.
   assert.deepEqual(JSON.parse(await readFile(out.filename, 'utf8')).pages, c.pages);
+});
+
+test('legacy downloaded v2 capture resumes a completed recovery without adding a missing checklist or rewriting its marker',async t=>{
+  const c=await context(t),out=await backupLocal(c.options),downloaded=JSON.parse(await readFile(out.filename,'utf8')),verified=await validateBackup(downloaded.pages);
+  assert.equal(Object.hasOwn(verified.tasks[0],'checklist'),false);assert.equal(Object.hasOwn(verified.snapshots[0].data.tasks[0],'checklist'),false);
+  const destination=path.join(c.root,'pre-checklist-completed'),recovered=await recoverBackup(downloaded.pages,destination,'fictional-legacy-recovery-owner'),sql=new DatabaseSync(recovered.database);t.after(()=>sql.close());
+  sql.prepare('UPDATE tasks SET payload=? WHERE id=?').run(JSON.stringify(archivedTask),taskId);
+  const before=Object.fromEntries(['tasks','task_events','snapshots','comments','comment_events','attachments','recovery_marker'].map(table=>[table,sql.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
+  assert.equal((await recoverBackup(downloaded.pages,destination,'fictional-legacy-recovery-owner')).complete,true);
+  assert.deepEqual(Object.fromEntries(Object.keys(before).map(table=>[table,sql.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()])),before);assert.deepEqual(JSON.parse(await readFile(out.filename,'utf8')).pages,c.pages);
+});
+
+test('v2 CLI download and recovery retain nonempty checklist IDs, order and states in task, history and source snapshot',async t=>{
+  const c=await context(t),checklist=[{id:'77777777-7777-4777-8777-777777777777',text:'Fictional pending step',checked:false},{id:'88888888-8888-4888-8888-888888888888',text:'Fictional finished step',checked:true}];
+  function addChecklist(value){if(Array.isArray(value)){for(const item of value)addChecklist(item);return}if(!value||typeof value!=='object')return;if(value.id===taskId&&typeof value.title==='string'&&typeof value.status==='string')value.checklist=structuredClone(checklist);for(const item of Object.values(value))addChecklist(item)}
+  addChecklist(c.pages);await rechain(c.pages);const out=await backupLocal({...c.options,pageSize:1}),downloaded=JSON.parse(await readFile(out.filename,'utf8')),verified=await validateBackup(downloaded.pages);
+  assert.deepEqual(downloaded.pages,c.pages);assert.deepEqual(verified.tasks[0].checklist,checklist);assert.deepEqual(verified.history[0].after.checklist,checklist);assert.deepEqual(verified.history[1].before.checklist,checklist);assert.deepEqual(verified.snapshots[0].data.tasks[0].checklist,checklist);
+  const recovered=await recoverBackup(downloaded.pages,path.join(c.root,'checklist-recovery'),'fictional-checklist-recovery-owner'),sql=new DatabaseSync(recovered.database);t.after(()=>sql.close());
+  assert.deepEqual(JSON.parse(sql.prepare('SELECT payload FROM tasks WHERE id=?').get(taskId).payload).checklist,checklist);assert.deepEqual(JSON.parse(sql.prepare('SELECT after_json FROM task_events WHERE request_key=?').get('synthetic-create-01').after_json).checklist,checklist);assert.deepEqual(JSON.parse(sql.prepare('SELECT payload FROM snapshots').get().payload).tasks[0].checklist,checklist);
 });
 
 for (const [name, change] of [

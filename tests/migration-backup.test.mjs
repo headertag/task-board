@@ -15,6 +15,7 @@ import {normalizePng,crc32} from '../lib/image.ts';
 import {hash,stable,stableId} from '../lib/safety.ts';
 import {recoverBackup} from '../scripts/recover-backup.mjs';
 import {backupLocal,backupOptionsFromEnvironment} from '../scripts/backup-local.mjs';
+import {prepareMigration,migrateCloudflare} from '../scripts/migrate-cloudflare.mjs';
 
 // Fictional records, identities and credentials only. All HTTP remains loopback.
 const owner='fictional-legacy-storage-owner';
@@ -31,10 +32,10 @@ function database(sql){return {prepare:q=>new Prepared(sql,q),batch:async ps=>{s
 function bucket(objects=new Map()){
  return {objects,puts:0,async put(key,bytes){this.puts++;objects.set(key,new Uint8Array(bytes));return {key}},async get(key,options){const bytes=objects.get(key);if(!bytes)return null;const part=options?.range?bytes.slice(options.range.offset,options.range.offset+options.range.length):bytes;return {arrayBuffer:async()=>part.buffer.slice(part.byteOffset,part.byteOffset+part.byteLength),body:new Blob([part]).stream()}}}
 }
-async function fixture(t){
+async function fixture(t,checklist){
  const sql=new DatabaseSync(':memory:');for(const file of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())sql.exec(readFileSync(path.join('drizzle',file),'utf8'));t.after(()=>sql.close());
  const db=database(sql),images=bucket(),service=new BoardService(db,owner,images);
- let task=await service.mutate('create',{task:{title:'Fictional migration record',sample:true},requestKey:'fixture-task-create'});
+ let task=await service.mutate('create',{task:{title:'Fictional migration record',sample:true,...(checklist?{checklist}:{})},requestKey:'fixture-task-create'});
  task=await service.mutate('update',{id:task.id,expectedRevision:task.revision,patch:{nextAction:'Fictional second revision'},requestKey:'fixture-task-update'});
  const attached=await service.activity.upload(task.id,'fixture-upload-attached',image,'evidence.png');
  const retained=await service.activity.upload(task.id,'fixture-upload-retained',image,'retained-draft.png');
@@ -48,6 +49,45 @@ async function capture(f,version=3){const operation=version===3?migrationPage:ba
 async function area(t){const root=await mkdtemp(path.join(tmpdir(),'task-board-migration-test-'));t.after(()=>rm(root,{recursive:true,force:true}));return root}
 async function rechain(pages){let previous=null;for(const p of pages){p.previousChecksum=previous;const {checksum,nextCursor,...body}=p;p.checksum=await hash(stable(body));previous=p.checksum}return pages}
 async function addPending(f){const id=await stableId(`${owner}:upload:fixture-pending-upload`),a={...f.retained,id};f.sql.prepare('INSERT INTO attachments(owner,id,task_id,payload,object_key,request_key,fingerprint,ready,size) VALUES(?,?,?,?,?,?,?,?,?)').run(owner,id,a.taskId,JSON.stringify(a),`images/${await hash(owner)}/${id}`,'fixture-pending-upload',await hash(stable({taskId:a.taskId,digest:a.sha256,filename:a.filename})),0,a.size)}
+
+// Model a capture/DB made by the preceding release, independently of current schema defaults.
+function withoutChecklists(value){if(Array.isArray(value))return value.map(withoutChecklists);if(!value||typeof value!=='object')return value;return Object.fromEntries(Object.entries(value).filter(([key])=>key!=='checklist').map(([key,item])=>[key,withoutChecklists(item)]))}
+function legacyRows(f){
+ for(const table of ['tasks','snapshots'])for(const row of f.sql.prepare(`SELECT id,payload FROM ${table} WHERE owner=?`).all(owner))f.sql.prepare(`UPDATE ${table} SET payload=? WHERE owner=? AND id=?`).run(JSON.stringify(withoutChecklists(JSON.parse(row.payload))),owner,row.id);
+ for(const row of f.sql.prepare('SELECT request_key,before_json,after_json FROM task_events WHERE owner=?').all(owner))f.sql.prepare('UPDATE task_events SET before_json=?,after_json=? WHERE owner=? AND request_key=?').run(row.before_json?JSON.stringify(withoutChecklists(JSON.parse(row.before_json))):null,JSON.stringify(withoutChecklists(JSON.parse(row.after_json))),owner,row.request_key);
+}
+
+test('pre-checklist v3 capture and already completed recovery retain missing fields, raw rows and marker on resume',async t=>{
+ const f=await fixture(t);legacyRows(f);const pages=await capture(f),original=structuredClone(pages),verified=await validateBackup(pages),plan=await prepareMigration(pages);
+ assert.equal(Object.hasOwn(verified.tasks[0],'checklist'),false);assert.equal(Object.hasOwn(pages[0].tasks[0],'checklist'),false);
+ const raw=f.sql.prepare('SELECT payload FROM tasks WHERE owner=? AND id=?').get(owner,f.task.id).payload;
+ assert.equal(plan.rows.tasks[0].payload,raw);assert.deepEqual(plan.data.snapshots[0].data,JSON.parse(f.sql.prepare('SELECT payload FROM snapshots WHERE owner=?').get(owner).payload));
+ const root=await area(t),destination=path.join(root,'legacy-completed'),out=await recoverBackup(pages,destination,owner),sql=new DatabaseSync(out.database);t.after(()=>sql.close());
+ // Explicitly restore the preceding release's payload even if current recovery accidentally normalizes it.
+ sql.prepare('UPDATE tasks SET payload=? WHERE owner=? AND id=?').run(raw,owner,f.task.id);
+ const before=Object.fromEntries(['tasks','task_events','snapshots','comments','comment_events','attachments','recovery_marker'].map(table=>[table,sql.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
+ assert.equal((await recoverBackup(pages,destination,owner)).complete,true);
+ const after=Object.fromEntries(Object.keys(before).map(table=>[table,sql.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));assert.deepEqual(after,before);assert.deepEqual(pages,original);
+ const images=bucket();for(const a of verified.attachments)images.objects.set(`images/${await hash(owner)}/${a.id}`,new Uint8Array(await readFile(path.join(out.objects,a.id+'.png'))));
+ const recaptured=await validateBackup(await capture({db:database(sql),images}));for(const key of ['tasks','history','snapshots','comments','commentHistory','attachments','uploadRetries'])assert.deepEqual(recaptured[key],verified[key]);
+ assert.deepEqual(await prepareMigration(pages),plan);
+ // A complete destination marker from the preceding release must still verify the same raw rows.
+ sql.exec('CREATE TABLE task_board_migration_state(owner TEXT PRIMARY KEY,backup_digest TEXT NOT NULL,owner_hash TEXT NOT NULL,state TEXT NOT NULL,counts_json TEXT NOT NULL)');sql.prepare('INSERT INTO task_board_migration_state VALUES(?,?,?,?,?)').run(owner,plan.digest,plan.ownerHash,'complete',JSON.stringify(verified.manifest.counts));
+ const settings={accountId:'a'.repeat(32),apiTokenId:'b'.repeat(32),databaseId:'11111111-1111-4111-8111-111111111111',databaseName:'fictional-checklist-db',bucketName:'fictional-checklist-images',origin:'https://task-board.fictional-owner.workers.dev',approved:true,pages},queries=[];
+ const remote={async inspect(){return {databaseName:settings.databaseName,actualDatabaseId:settings.databaseId,databaseId:settings.databaseId,bucketName:settings.bucketName,boundBucket:settings.bucketName,origin:settings.origin,accountOrigin:settings.origin,readOnly:'true',privateBucket:true}},async query(query,args=[]){queries.push(query);const statement=sql.prepare(query);return /^SELECT/i.test(query)?statement.all(...args):(statement.run(...args),[])},async getObject(key){return images.objects.get(key)??null},async putObject(){assert.fail('Completed legacy migration must not upload images again')}};
+ assert.equal((await migrateCloudflare(settings,{remote})).complete,true);assert.equal((await migrateCloudflare(settings,{remote})).complete,true);assert.equal(queries.some(query=>query.startsWith('INSERT INTO')),false);
+ assert.deepEqual(Object.fromEntries(Object.keys(before).map(table=>[table,sql.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()])),before);
+});
+
+test('nonempty checklist IDs, order and checked states survive portable copies, v2/v3 backup and exact recovery',async t=>{
+ const checklist=[{id:'11111111-1111-4111-8111-111111111111',text:'Fictional first step',checked:false},{id:'22222222-2222-4222-8222-222222222222',text:'Fictional second step',checked:true}],f=await fixture(t,checklist),root=await area(t);
+ const portable=await f.service.export(),copy=new BoardService(f.db,'fictional-checklist-copy-owner',f.images),preview=await copy.preview(portable),imported=await copy.import(portable,preview.digest,'fixture-checklist-copy');
+ assert.notEqual(imported.createdIds[0],f.task.id);assert.deepEqual((await copy.get(imported.createdIds[0])).checklist,checklist);assert.deepEqual(await copy.import(portable,preview.digest,'fixture-checklist-copy'),imported);
+ for(const version of [2,3]){const pages=await capture(f,version),verified=await validateBackup(pages),out=await recoverBackup(pages,path.join(root,'checklist-'+version),owner),sql=new DatabaseSync(out.database);t.after(()=>sql.close());
+  assert.deepEqual(verified.tasks[0].checklist,checklist);assert.deepEqual(verified.history[0].after.checklist,checklist);assert.deepEqual(verified.history.at(-1).before.checklist,checklist);assert.deepEqual(verified.snapshots[0].data.tasks[0].checklist,checklist);assert.deepEqual(JSON.parse(sql.prepare('SELECT payload FROM tasks WHERE owner=? AND id=?').get(owner,f.task.id).payload).checklist,checklist);
+  assert.equal((await recoverBackup(pages,path.join(root,'checklist-'+version),owner)).complete,true);
+ }
+});
 
 test('v3 export and repeated recovery preserve exact records, retained images and original upload retries',async t=>{
  const f=await fixture(t),pages=await capture(f),verified=await validateBackup(pages);
