@@ -11,7 +11,9 @@ This repository contains application code and fictional fixtures only. It does n
 - Date-only or explicitly timed tasks with IANA timezone; monthly recurrence preserves the local time and original day anchor through short months
 - Optimistic revisions, idempotent mutation keys, durable change history, recoverable Trash
 - Validated import preview, copy-only imports, portable JSON exports, and recovery snapshots
-- Shared browser/API/MCP operations, with per-user record isolation
+- Shared browser/API/MCP operations, with storage-owner isolation and explicitly allowed collaborators
+- Owner-managed Google email access with view or edit permissions, verified identity pinning and revocation
+- Saved task checklists with checkboxes and crossed-out completed items
 - Spacious read-first task details with separate editing and unsaved-draft protection
 - Safe clickable source links, product cards and address/map cards without external preview fetching
 - Durable comments with independent revisions, recoverable removal, private normalized image attachments
@@ -45,6 +47,8 @@ The no-network route tests exercise actual signed synthetic JWTs and browser PKC
 ## Authentication is a required trust boundary
 
 Controlled Workers use cryptographically verified WorkOS AuthKit/Connect credentials and a private per-request Google/GitHub identity allowlist. Browser login uses Public PKCE and a sealed, expiring session; MCP/API bearer tokens require the exact configured issuer/audience/expiry and a user consent. Incoming identity headers confer no access. Explicit identity rules map verified provider IDs and WorkOS users to existing storage owners and every D1/R2 query remains owner-scoped.
+
+A fully pinned Google browser owner can open **Access** to allow exact verified Google email addresses onto the same board with view or edit permissions. First sign-in atomically pins the collaborator's Google and WorkOS identities; revocation applies to the next authenticated request and retains those pins. Collaborators and MCP clients cannot manage membership. See [board access](docs/board-access.md) for manual additions, scope and recovery.
 
 External agents default to read-only. An owner can explicitly delegate writes to their consented agents with private `owners[].agentAccess: "write"`; every identity on that owner must pin its provider ID and WorkOS user ID. This includes DCR/CIMD clients and existing valid grants. Explicit client restrictions take precedence: `access: "read"` blocks writes, and a configured write client still needs its exact custom `writeScope`. Client labels and OIDC scopes confer no task permissions; the global write lock still applies. No account grant, social credentials, allowlist, paid service, deployment or migration is created by this source. Follow [controlled hosting](docs/oauth-hosting.md) and the [synthetic cutover gate](docs/oauth-cutover.md). WorkOS staging and bundled social credentials are for testing; production configuration and migration require their own verified setup. The existing private Site remains authoritative until verified, authorized cutover.
 

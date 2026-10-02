@@ -2,6 +2,8 @@
 
 Task data, images and backup files are private. Keep them outside source control. The public source contains no real records.
 
+Access grants and their audit events are separate security configuration, excluded from portable exports and complete v2/v3 task backups. A task restore into a fresh database admits only configured bootstrap identities until the owner recreates collaborator access. Preserve grants, identity pins and access audit events separately through an authorized private database recovery when membership continuity is required; importing tasks must never grant access. See [board access](docs/board-access.md).
+
 ## Backup and migration formats
 
 - **Portable task export (version 2)** includes tasks, comments, their history and normalized PNG images, up to 750 KB UTF-8, 100 tasks and 2,000 events of each kind. Version-1 task-only files remain importable. Preview validates task fields, comment relationships, image bytes/dimensions and checksums before changes. Imports create copies with new IDs and remapped image/comment references; original histories remain in the source snapshot. Reuse the same request key to resume a partial copy import. Existing records are never replaced.

@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey, type JWTPayload } from 'jose';
 import { AppError } from './errors';
+import type { AccessStore } from './access';
 
 export { AppError as AuthError } from './errors';
 
@@ -40,6 +41,7 @@ export type AuthPrincipal = {
   displayName: string;
   kind: 'browser' | 'connect';
   canWrite: boolean;
+  canManageAccess: boolean;
   clientId?: string;
   consentId?: string;
   scopes: string[];
@@ -49,6 +51,7 @@ export type AuthDependencies = {
   fetch?: typeof fetch;
   key?: JWTVerifyGetKey;
   currentDate?: Date;
+  accessStore?: Pick<AccessStore, 'find' | 'pin'>;
 };
 
 const OIDC_SCOPES = new Set(['openid', 'profile', 'email', 'offline_access']);
@@ -273,28 +276,45 @@ async function lookupWorkosUser(subject: string, config: AuthConfig, dependencie
 /** Browser callers must obtain the subject from a verified, sealed session, never headers. */
 export async function authorizeWorkosUser(workosUserId: string, config: AuthConfig, context: AuthContext, dependencies: AuthDependencies = {}): Promise<AuthPrincipal> {
   if (!nonempty(workosUserId, 200) || !workosUserId.startsWith('user_')) return invalidToken();
+  if (context.kind === 'connect' && (!nonempty(context.clientId, 2048) || !nonempty(context.consentId, 200))) return invalidToken();
   const user = await lookupWorkosUser(workosUserId, config, dependencies);
-  const matches = config.policy.owners.filter(owner => owner.identities.some(rule =>
+  const ruleMatches = (rule:IdentityRule) =>
     (!rule.workosUserId || rule.workosUserId === user.id) &&
     (!rule.email || (user.emailVerified && rule.email === user.email)) &&
-    user.identities.some(identity => identity.provider === rule.provider && (!rule.providerId || identity.providerId === rule.providerId)),
-  ));
+    user.identities.some(identity => identity.provider === rule.provider && (!rule.providerId || identity.providerId === rule.providerId));
+  const matches = config.policy.owners.filter(owner => owner.identities.some(ruleMatches));
+  const google = user.identities.filter(identity => identity.provider === 'google');
+  const members = dependencies.accessStore && user.emailVerified && google.length === 1
+    ? (await dependencies.accessStore.find(user.email, config.policy.owners.map(owner=>owner.ownerId))).filter(member => member.active &&
+      (member.providerId === null && member.workosUserId === null || member.providerId === google[0].providerId && member.workosUserId === user.id))
+    : [];
   // An ambiguous map fails closed instead of moving a user between existing boards.
-  if (matches.length !== 1) throw new AppError(403, 'identity_not_allowed', 'This identity is not allowed to access the task board');
-  const ownerId = matches[0].ownerId;
-  let canWrite = context.kind === 'browser';
+  const owners = new Set([...matches.map(owner=>owner.ownerId), ...members.map(member=>member.ownerId)]);
+  if (owners.size !== 1 || matches.length === 0 && members.length !== 1) throw new AppError(403, 'identity_not_allowed', 'This identity is not allowed to access the task board');
+  const ownerId = [...owners][0], owner = config.policy.owners.find(candidate=>candidate.ownerId===ownerId);
+  if (!owner) throw new AppError(403, 'identity_not_allowed', 'This identity is not allowed to access the task board');
+  let memberWrite = true;
+  if (!matches.length) {
+    const member = await dependencies.accessStore!.pin(members[0], {providerId:google[0].providerId,workosUserId:user.id});
+    if (!member || !member.active || member.ownerId!==ownerId || member.email!==user.email || member.providerId!==google[0].providerId || member.workosUserId!==user.id || !['read','write'].includes(member.access)) throw new AppError(403, 'identity_not_allowed', 'This identity is not allowed to access the task board');
+    memberWrite = member.access === 'write';
+  }
+  // A new invitation never makes a member a manager; incomplete legacy rules
+  // preserve their task rights without acquiring this new administrative right.
+  const canManageAccess = context.kind === 'browser' && matches.some(candidate => candidate.identities.some(rule =>
+    rule.provider === 'google' && rule.email && rule.providerId && rule.workosUserId && ruleMatches(rule)));
+  let canWrite = context.kind === 'browser' && memberWrite;
   if (context.kind === 'connect') {
-    if (!nonempty(context.clientId, 2048) || !nonempty(context.consentId, 200)) return invalidToken();
     const client = config.policy.clients.find(candidate => candidate.clientId === context.clientId);
     // Explicit client rules take precedence over the owner's dynamic-client delegation.
     // OIDC scopes and caller-supplied permission labels never grant task mutations.
-    canWrite = client
+    canWrite = memberWrite && (client
       ? client.access === 'write' && Boolean(client.writeScope && context.scopes.includes(client.writeScope))
-      : matches[0].agentAccess === 'write';
+      : owner.agentAccess === 'write');
   }
   return {
     ownerId, userId: ownerId, workosUserId: user.id, email: user.email,
-    displayName: user.name || user.email, kind: context.kind, canWrite,
+    displayName: user.name || user.email, kind: context.kind, canWrite, canManageAccess,
     scopes: context.kind === 'connect' ? [...context.scopes] : [],
     ...(context.kind === 'connect' ? { clientId: context.clientId, consentId: context.consentId } : {}),
   };
