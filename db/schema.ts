@@ -1,4 +1,5 @@
-import { sqliteTable, text, integer, primaryKey, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, primaryKey, index, uniqueIndex, check } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
 export const tasks = sqliteTable('tasks', {
   owner: text('owner').notNull(), id: text('id').notNull(), payload: text('payload').notNull(),
   status: text('status').notNull(), archived: integer('archived').notNull().default(0),
@@ -28,3 +29,16 @@ export const backupKeys=sqliteTable('backup_keys',{owner:text('owner').primaryKe
 export const oauthTransactions=sqliteTable('oauth_transactions',{
  stateHash:text('state_hash').primaryKey(),expiresAt:integer('expires_at').notNull(),
 },t=>[index('idx_oauth_transactions_expiry').on(t.expiresAt)]);
+
+// Revoked invitations retain their first verified identity pins.
+export const accessGrants=sqliteTable('access_grants',{
+ owner:text('owner').notNull(),email:text('email').notNull(),access:text('access').notNull(),active:integer('active').notNull().default(1),
+ googleProviderId:text('google_provider_id'),workosUserId:text('workos_user_id'),version:integer('version').notNull().default(1),
+ createdAt:text('created_at').notNull(),updatedAt:text('updated_at').notNull(),lastActionId:text('last_action_id').notNull(),lastActorUserId:text('last_actor_user_id').notNull(),
+},t=>[primaryKey({columns:[t.owner,t.email]}),index('idx_access_email_active').on(t.email,t.active),
+ check('access_role',sql`${t.access} IN ('read','write')`),check('access_active',sql`${t.active} IN (0,1)`),check('access_email_lower',sql`${t.email}=lower(${t.email})`),
+ check('access_pin_pair',sql`(${t.googleProviderId} IS NULL AND ${t.workosUserId} IS NULL) OR (${t.googleProviderId} IS NOT NULL AND ${t.workosUserId} IS NOT NULL)`),check('access_version',sql`${t.version}>0`)]);
+export const accessEvents=sqliteTable('access_events',{
+ owner:text('owner').notNull(),id:text('id').notNull(),email:text('email').notNull(),action:text('action').notNull(),actorUserId:text('actor_user_id').notNull(),
+ access:text('access').notNull(),active:integer('active').notNull(),googleProviderId:text('google_provider_id'),workosUserId:text('workos_user_id'),version:integer('version').notNull(),createdAt:text('created_at').notNull(),
+},t=>[primaryKey({columns:[t.owner,t.id]}),index('idx_access_events_member').on(t.owner,t.email)]);

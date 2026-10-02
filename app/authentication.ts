@@ -4,8 +4,11 @@ import { redirect } from 'next/navigation';
 import { authenticateBearer, readAuthConfig, AuthError, type AuthBindings } from '../lib/auth';
 import { browserPrincipal, readBrowserConfig, cookie, SESSION_COOKIE, type BrowserBindings } from '../lib/browser-auth';
 import { safeError } from '../lib/operations';
+import { AccessStore } from '../lib/access';
+import { database } from '../lib/db';
 
 export const authBindings = () => env as unknown as AuthBindings & BrowserBindings;
+export const boardAuthDependencies = () => ({accessStore:new AccessStore(database())});
 export function requireMigrationFreeze() {
   if (env.TASK_BOARD_READ_ONLY !== 'true') throw new AuthError(409, 'migration_requires_freeze', 'Freeze board writes before capturing a migration backup');
 }
@@ -17,12 +20,12 @@ export async function getBoardPrincipal(request?: Request) {
   const config = readAuthConfig(authBindings());
   // A bad bearer credential never falls back to a more privileged browser cookie.
   let principal;
-  if (requestHeaders.has('authorization')) principal = await authenticateBearer(requestHeaders, config);
+  if (requestHeaders.has('authorization')) principal = await authenticateBearer(requestHeaders, config, boardAuthDependencies());
   else {
     if (!cookie(requestHeaders, SESSION_COOKIE)) return null;
     const browser = readBrowserConfig(authBindings(), config);
     if (request && new URL(request.url).origin !== browser.origin) throw new AuthError(403, 'origin_mismatch', 'Request origin is not allowed');
-    principal = await browserPrincipal(requestHeaders, browser);
+    principal = await browserPrincipal(requestHeaders, browser, boardAuthDependencies());
   }
   return principal && (readOnly === 'true' ? { ...principal, canWrite: false } : principal);
 }
