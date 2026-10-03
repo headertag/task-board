@@ -14,7 +14,7 @@ External clients default to read-only, including dynamically registered clients.
 
 Start a logical edit with a fresh read of the affected task or comment and use that record’s current revision. Keep the request key stable for the same logical mutation; use a new unique key for a new intentional action.
 
-- `list_tasks` lists active records by default; `archived: true` selects Trash. `get_task` includes recent history
+- `list_tasks` returns compact summaries of non-archived records (including Completed and Reference); `archived: true` selects Trash. Summaries contain identity, title, category, status, attention, schedule, revision and source-check metadata, excluding next action, blocker, evidence, links/resources and checklist text. Use `get_task` for the full task and recent history before deciding or editing.
 - `list_comments` is newest-first and includes recoverably removed comments. Follow `nextCursor` for older pages. `get_comment` reads one comment and private image metadata
 - `create_task` and `add_comment` need a fresh `requestKey`. Every other mutation also needs one. Retain the exact key and arguments for retries after an uncertain response; a new key can duplicate work. Reusing a key for different arguments is rejected
 - Task edits/completion/archive/restore require the current task `expectedRevision`. Comment edits/archive/restore require the current **comment** revision, independent of its task. On a conflict, re-read and reconcile; never blindly replace the revision

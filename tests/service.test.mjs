@@ -107,3 +107,16 @@ await assert.rejects(()=>execute(legacyService,'create_task',{requestKey:legacyK
 const changedLegacy=(await execute(legacyService,'update_task',{id:legacyTask.id,expectedRevision:1,requestKey:'legacy-list-first-edit',patch:{checklist:[{...milk,text:'Milk'}]}})).task;
 assert.equal(changedLegacy.revision,2);const legacyHistory=await legacyService.history(legacyTask.id);assert.equal(Object.hasOwn(legacyHistory.find(e=>e.after.revision===2).before,'checklist'),false);assert.deepEqual(changedLegacy.checklist,[{...milk,text:'Milk'}]);
 console.log('PASS: legacy JSON/history/export/preview remain unchanged on reads, old normalized create retries replay, and explicit checklist edits retain the original history snapshot.');
+
+const verbose=await a.mutate('create',{requestKey:'compact-list-fixture',task:{title:'Compact summary fixture',nextAction:'N'.repeat(2000),blocker:'B'.repeat(2000),evidenceNote:'E'.repeat(6000),checklist:[{id:crypto.randomUUID(),text:'Only in details',checked:false}]}});
+const summaries=await execute(a,'list_tasks',{}),summary=summaries.tasks.find(t=>t.id===verbose.id);
+assert.equal(summary.title,verbose.title);assert.equal(summary.revision,verbose.revision);
+for(const field of ['nextAction','blocker','evidenceNote','resources','checklist','sourceUrl','sourceChatId'])assert.equal(Object.hasOwn(summary,field),false);
+assert.ok(JSON.stringify(summary).length<JSON.stringify(verbose).length/10);
+assert.deepEqual((await execute(a,'get_task',{id:verbose.id})).task,verbose);
+const trashed=await a.mutate('archive',{id:verbose.id,expectedRevision:verbose.revision,requestKey:'compact-list-archive'});
+assert.equal((await execute(a,'list_tasks',{})).tasks.some(t=>t.id===verbose.id),false);
+const trashSummary=(await execute(a,'list_tasks',{archived:true})).tasks.find(t=>t.id===verbose.id);
+assert.equal(trashSummary.archived,true);assert.equal(trashSummary.revision,trashed.revision);assert.equal(Object.hasOwn(trashSummary,'evidenceNote'),false);
+assert.equal((await execute(b,'list_tasks',{})).tasks.some(t=>t.id===verbose.id),false);
+console.log('PASS compact lists omit narrative data, preserve revisions/Trash/isolation, and full details remain available');

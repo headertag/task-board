@@ -13,6 +13,9 @@ export const taskInput=z.object({title:z.string().trim().min(1).max(200),categor
 // Keep absent fields absent on legacy reads, exports, backups and recovery.
 export const taskSchema=taskInput.extend({checklist:checklistSchema.optional(),id:z.string().uuid(),revision:z.number().int().positive(),createdAt:z.string().datetime(),updatedAt:z.string().datetime(),archived:z.boolean()}).strict();
 export type Task=z.infer<typeof taskSchema>;export type TaskInput=z.infer<typeof taskInput>;
+// List responses deliberately exclude all narrative/detail fields.
+export type TaskSummary=Pick<Task,'id'|'title'|'category'|'status'|'attention'|'dueDate'|'dueTime'|'timezone'|'recurrence'|'sourceVerifiedAt'|'sample'|'revision'|'updatedAt'|'archived'>;
+export function summarizeTask(t:Task):TaskSummary {const {id,title,category,status,attention,dueDate,dueTime,timezone,recurrence,sourceVerifiedAt,sample,revision,updatedAt,archived}=t;return {id,title,category,status,attention,dueDate,dueTime,timezone,recurrence,sourceVerifiedAt,sample,revision,updatedAt,archived};}
 export function validateTask(v:unknown):TaskInput { const t=taskInput.parse(v);if(t.dueTime&&(!t.dueDate||!t.timezone))throw new Error('A local due time needs a due date and timezone');if(t.recurrence&&(!t.dueDate||!t.timezone))throw new Error('Monthly tasks need a due date and timezone');return t; }
 export function nextOccurrence(dueDate:string,rule:z.infer<typeof recurrenceSchema>):string {const [y,m]=dueDate.split('-').map(Number);const d=new Date(Date.UTC(y,m-1+rule.interval,1));const last=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,0)).getUTCDate();return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(Math.min(rule.anchorDay,last)).padStart(2,'0')}`;}
 export function inputOf(t:Task):TaskInput {const {id,revision,createdAt,updatedAt,archived,...rest}=t;return {...rest,checklist:t.checklist??[]};}
