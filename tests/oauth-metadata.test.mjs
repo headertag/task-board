@@ -61,5 +61,6 @@ test('browser signin pins PKCE, state, nonce, audience, redirect and safe return
  await assert.rejects(beginSignIn(new Request('https://board.example.com/auth/signin',{headers:{'sec-fetch-site':'cross-site'}}),browser,store),e=>e.status===403);
  await assert.rejects(beginSignIn(new Request('https://evil.example/auth/signin'),browser,store),e=>e.status===403);
  for(const path of ['//evil.example','/\\evil.example','/auth/signout','/\\[','/\\%5B'])assert.equal(safeReturnTo(path),'/');
- assert.equal(safeReturnTo('/?board=1#task'), '/?board=1#task');
+ assert.equal(safeReturnTo('/?board=1#task'), '/');
+ const taskLink='/?task='+crypto.randomUUID();assert.equal(safeReturnTo(taskLink),taskLink);
 });
