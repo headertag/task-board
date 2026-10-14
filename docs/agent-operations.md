@@ -59,3 +59,7 @@ A writable connection to server `1.3.0` advertises 24 tools, including `edit_che
 ## Task permalinks (server 1.3.1)
 
 `get_task` returns `taskPath`, a relative `/?task=<UUID>` path from the same shared helper as the browser's Copy task link button. Resolve it against the configured MCP endpoint origin. Opening it requires existing board access and performs fresh authorized reads; it does not invite a user, restore an archived task or mutate any record. Task lists remain compact.
+
+## Image previews (server 1.3.2)
+
+`get_attachment` returns a private relative `previewPath` for PNG/JPEG/GIF/WebP filenames (or normalized PNGs); resolve against the MCP endpoint origin. The shared browser/MCP link performs a fresh authorized read and validates raster signatures before serving inline. Unsupported or mislabeled files return 415 and remain downloadable. Previewing never rewrites the original bytes, metadata or backup format.

@@ -131,3 +131,15 @@ resetChecklist();openChecklist();await screen.findByRole('link',{name:/fixture.p
 fireEvent.change(screen.getByLabelText('Upload task files'),{target:{files:[{...pdf,size:2097153}]}});await screen.findByText('Choose a nonempty file up to 2 MB');assert.equal(fileUploads.length,1);
 resetChecklist();openChecklist({canWrite:false});await screen.findByRole('link',{name:/fixture.pdf/});assert.equal(screen.queryByRole('button',{name:'Add image / PDF / file'}),null);
 console.log('PASS file upload uses shared operation, retains exact PDF bytes, reloads saved links and enforces limits/read-only UI');
+
+const originalPhoto={id:crypto.randomUUID(),taskId:a.id,filename:'original-photo.jpeg',contentType:'application/octet-stream',size:320,width:0,height:0,sha256:'b'.repeat(64),createdAt:new Date().toISOString()};
+savedFiles.push(originalPhoto);resetChecklist();openChecklist();
+const thumbnail=await screen.findByRole('button',{name:'Preview original-photo.jpeg'});
+const photo=thumbnail.querySelector('img')!;assert.equal(photo.getAttribute('src'),'/api/images?id='+originalPhoto.id+'&preview=1');
+assert.equal(screen.getByRole('button',{name:'Copy task link'}).parentElement,screen.getByRole('button',{name:'Edit task'}).parentElement);
+assert.equal(screen.queryByText('Only people with board access can open this link.'),null);
+fireEvent.click(thumbnail);await screen.findByRole('link',{name:'Download original'});assert.equal(screen.getByRole('link',{name:'Download original'}).getAttribute('download'),originalPhoto.filename);
+cleanup();openChecklist();const broken=await screen.findByRole('button',{name:'Preview original-photo.jpeg'});fireEvent.error(broken.querySelector('img')!);
+assert.ok(screen.getByRole('link',{name:'original-photo.jpeg'}));assert.equal(screen.queryByRole('button',{name:'Preview original-photo.jpeg'}),null);
+console.log('PASS generic JPEG thumbnail, original download, failed-preview fallback and shared task action row');
+cleanup();
