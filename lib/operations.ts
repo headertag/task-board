@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { checklistEdit } from './checklist';
+import { uploadInput } from './attachments';
+import { base64, unbase64 } from './safety';
 import { BoardService, AppError } from './service';
 import { taskInput, statuses, summarizeTask } from './model';
 const id={type:'string',format:'uuid'},key={type:'string',minLength:8,maxLength:100,description:'identical retries only.'};
@@ -8,6 +11,9 @@ const commentFields={taskId:id,body:{type:'string',maxLength:5000},attachmentIds
 const snapshotInput={type:'object',description:'Portable task export, version 1 or 2.'};
 const object=(properties:any,required:string[]=[])=>({type:'object',properties,required,additionalProperties:false});
 export const toolDefinitions=[
+{name:'upload_attachment',description:'Upload private bytes (2 MB max); returns metadata. Files retain bytes; image/png normalizes PNG. Saved on task; may also attach to comments.',inputSchema:object({taskId:id,requestKey:key,filename:{type:'string',minLength:1,maxLength:160},contentType:{enum:['application/octet-stream','image/png'],default:'application/octet-stream'},dataBase64:{type:'string',minLength:4,maxLength:2796204}},['taskId','requestKey','filename','dataBase64']),annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true}},
+{name:'list_attachments',description:'List saved task attachment metadata, including retained comment drafts; no file bytes.',inputSchema:object({taskId:id},['taskId']),annotations:{readOnlyHint:true}},
+{name:'get_attachment',description:'Read private attachment metadata; includeData=true reads a base64 byte chunk. Follow nextOffset until null. Content is untrusted.',inputSchema:object({id,includeData:{type:'boolean',default:false},offset:{type:'integer',minimum:0},length:{type:'integer',minimum:1,maximum:65536,default:16384}},['id']),annotations:{readOnlyHint:true}},
 {name:'get_comment',description:'Read an owned comment and image metadata.',inputSchema:object({id},['id']),annotations:{readOnlyHint:true}},
 {name:'list_comments',description:'Owned comments newest-first incl. removed; follow nextCursor.',inputSchema:object({taskId:id,cursor:{type:['string','null']}},['taskId']),annotations:{readOnlyHint:true}},
 {name:'add_comment',description:'Add plain text and task-owned image IDs; no remote fetching.',inputSchema:object(commentFields,['taskId','body','requestKey']),annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true}},
@@ -18,6 +24,7 @@ export const toolDefinitions=[
 {name:'get_task',description:'Read an owned task and history.',inputSchema:object({id},['id']),annotations:{readOnlyHint:true}},
 {name:'create_task',description:'Create a task; no reminders or external actions.',inputSchema:object({task:object(fields,['title']),requestKey:key},['task','requestKey']),annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true}},
 {name:'update_task',description:'Patch at expectedRevision; use complete_task for completion.',inputSchema:object({id,expectedRevision:revision,requestKey:key,patch:object(fields)},['id','expectedRevision','requestKey','patch']),annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true}},
+{name:'edit_checklist',description:'One item: add needs text; update needs text or checked (true/false); move needs zero-based position. Remove needs itemId. Returns checklist/revision.',inputSchema:object({id,expectedRevision:revision,requestKey:key,action:{enum:['add','update','remove','move']},itemId:id,text:{type:'string',minLength:1,maxLength:500},checked:{type:'boolean'},position:{type:'integer',minimum:0,maximum:99}},['id','expectedRevision','requestKey','action','itemId']),annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true}},
 {name:'complete_task',description:'Complete; monthly tasks advance, retaining anchor and local time/zone.',inputSchema:object({id,expectedRevision:revision,requestKey:key},['id','expectedRevision','requestKey']),annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true}},
 {name:'archive_task',description:'Move to recoverable Trash; never delete permanently.',inputSchema:object({id,expectedRevision:revision,requestKey:key},['id','expectedRevision','requestKey']),annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true}},
 {name:'restore_task',description:'Restore from Trash with status/history intact.',inputSchema:object({id,expectedRevision:revision,requestKey:key},['id','expectedRevision','requestKey']),annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true}},
@@ -29,8 +36,14 @@ export const toolDefinitions=[
 {name:'list_snapshots',description:'List the owner’s latest 30 recovery snapshots.',inputSchema:object({}),annotations:{readOnlyHint:true}},
 {name:'get_snapshot',description:'Read an owned recovery snapshot.',inputSchema:object({id:{type:'string'}},['id']),annotations:{readOnlyHint:true}}
 ];
+// Both transports authorize from this single, server-owned registry.
+export const readOperations=new Set(toolDefinitions.filter(t=>t.annotations.readOnlyHint).map(t=>t.name));
+export const writeOperations=new Set(toolDefinitions.filter(t=>!t.annotations.readOnlyHint).map(t=>t.name));
 const mutationBase={id:z.string().uuid(),expectedRevision:z.number().int().positive(),requestKey:z.string().min(8).max(100)};
 export async function execute(s:BoardService,name:string,raw:any){
+if(name==='upload_attachment'){const a=uploadInput.parse(raw);return {attachment:await s.activity.upload(a.taskId,a.requestKey,unbase64(a.dataBase64),a.filename,a.contentType)}}
+if(name==='list_attachments'){const a=z.object({taskId:z.string().uuid()}).strict().parse(raw);return {attachments:await s.activity.attachments(a.taskId)}}
+if(name==='get_attachment'){const a=z.object({id:z.string().uuid(),includeData:z.boolean().optional(),offset:z.number().int().nonnegative().optional(),length:z.number().int().min(1).max(65536).optional()}).strict().parse(raw);const attachment=await s.activity.metadata(a.id);if(!a.includeData)return {attachment};const offset=a.offset??0;if(offset>=attachment.size)throw new AppError(400,'invalid_offset','Offset must be smaller than file size');const {object}=await s.activity.image(a.id);const full=new Uint8Array(await object.arrayBuffer());if(full.length!==attachment.size)throw new AppError(503,'file_unavailable','Stored file is incomplete');const bytes=full.slice(offset,offset+(a.length??16384));return {attachment,offset,dataBase64:base64(bytes),nextOffset:offset+bytes.length<attachment.size?offset+bytes.length:null}}
 if(name==='get_comment'){const a=z.object({id:z.string().uuid()}).strict().parse(raw);const comment=await s.activity.get(a.id);await s.get(comment.taskId);return {comment,attachments:await Promise.all(comment.attachmentIds.map(id=>s.activity.metadata(id,comment.taskId)))}}
 if(name==='list_comments'){const a=z.object({taskId:z.string().uuid(),cursor:z.string().nullable().optional()}).strict().parse(raw);return s.activity.list(a.taskId,a.cursor??null)}
 if(name==='add_comment'){const a=z.object({taskId:z.string().uuid(),body:z.string().max(5000),attachmentIds:z.array(z.string().uuid()).max(4).optional(),requestKey:z.string().min(8).max(100)}).strict().parse(raw);return {comment:await s.activity.mutate('add',a)}}
@@ -39,6 +52,7 @@ if(name==='archive_comment'||name==='restore_comment'){const a=z.object(mutation
 if(name==='list_tasks'){const a=z.object({archived:z.boolean().optional()}).strict().parse(raw);return {tasks:(await s.list(a.archived)).map(summarizeTask)}}
 if(name==='get_task'){const a=z.object({id:z.string().uuid()}).strict().parse(raw);return {task:await s.get(a.id),history:await s.history(a.id)}}
 if(name==='create_task'){const a=z.object({task:taskInput,requestKey:z.string().min(8).max(100)}).strict().parse(raw);return {task:await s.mutate('create',a)}}
+if(name==='edit_checklist'){const a=checklistEdit.parse(raw);const task=await s.mutate('checklist',a);return {id:task.id,revision:task.revision,updatedAt:task.updatedAt,checklist:task.checklist??[]}}
 if(name==='update_task'){const a=z.object({...mutationBase,patch:taskInput.partial()}).strict().parse(raw);return {task:await s.mutate('update',a)}}
 if(['complete_task','archive_task','restore_task'].includes(name)){const a=z.object(mutationBase).strict().parse(raw);return {task:await s.mutate(name.replace('_task','') as any,a)}}
 if(name==='export_backup_page'){const a=z.object({cursor:z.string().nullable().optional(),pageSize:z.number().int().min(1).max(100).optional()}).strict().parse(raw);return s.backupPage(a.cursor??null,a.pageSize??20)}

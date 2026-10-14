@@ -1,3 +1,4 @@
+import {prepareAttachment} from '../lib/attachments.ts';
 // One-time, owner-scoped migration. Routine deployments never call this script.
 import {open, lstat} from 'node:fs/promises';
 import {constants} from 'node:fs';
@@ -5,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash,createHmac} from 'node:crypto';
 import {validateBackup} from '../lib/backup.ts';
-import {normalizePng,boundedBytes,IMAGE_LIMIT} from '../lib/image.ts';
+import {boundedBytes,IMAGE_LIMIT} from '../lib/image.ts';
 import {hash, stable, stableId} from '../lib/safety.ts';
 
 export class MigrationError extends Error {
@@ -34,7 +35,7 @@ export async function prepareMigration(pages, suppliedOwner) {
   for (const a of data.attachments) {
     const r=retries.get(a.id);
     if (!r || await stableId(`${owner}:upload:${r.requestKey}`)!==a.id) stop('upload_identity_mismatch');
-    const png=await normalizePng(data.blobs.get(a.id));
+    const png=await prepareAttachment(data.blobs.get(a.id),a.contentType);
     if (png.width!==a.width || png.height!==a.height) stop('invalid_image');
   }
   const rows={

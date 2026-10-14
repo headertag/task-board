@@ -1,15 +1,15 @@
+import {prepareAttachment} from '../lib/attachments.ts';
 // Local/offline recovery only. Never connects to the live Site or overwrites an existing destination.
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync,writeFileSync,readdirSync,existsSync,mkdirSync,renameSync,openSync,closeSync,fsyncSync,lstatSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {validateBackup} from '../lib/backup.ts';
-import {normalizePng} from '../lib/image.ts';
 import {hash,stable,stableId} from '../lib/safety.ts';
 function atomicState(filename,value){const next=filename+'.next';const fd=openSync(next,'w',0o600);try{writeFileSync(fd,JSON.stringify(value));fsyncSync(fd)}finally{closeSync(fd)}renameSync(next,filename);const directory=openSync(path.dirname(filename),'r');try{fsyncSync(directory)}finally{closeSync(directory)}}
 export async function recoverBackup(pages,destination,owner){
  if(typeof owner!=='string'||!owner.trim())throw new Error('An explicit recovery owner is required');
- const data=await validateBackup(pages);for(const a of data.attachments){const image=await normalizePng(data.blobs.get(a.id));if(image.width!==a.width||image.height!==a.height)throw new Error('Invalid image dimensions')}
+ const data=await validateBackup(pages);for(const a of data.attachments){const image=await prepareAttachment(data.blobs.get(a.id),a.contentType);if(image.width!==a.width||image.height!==a.height)throw new Error('Invalid image dimensions')}
  const checksum=await hash(stable(pages)),ownerHash=await hash(owner),statePath=path.join(destination,'recovery-state.json');let existing=null;
  const retries=new Map(data.uploadRetries.map(r=>[r.attachmentId,r]));
  if(data.manifest.version===3){if(owner!==data.manifest.storageOwner||ownerHash!==data.manifest.ownerTag)throw new Error('Migration recovery must retain the original storage owner');for(const a of data.attachments)if(a.id!==await stableId(`${owner}:upload:${retries.get(a.id).requestKey}`))throw new Error('Migration upload ID does not match its original owner and request key')}

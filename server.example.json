@@ -3,7 +3,7 @@
   "name": "io.github.headertag/task-board",
   "title": "Yet Another Task Board",
   "description": "OAuth-protected task board. Read-only agents by default; private tasks, images and portable backups.",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "repository": {
     "url": "https://github.com/headertag/task-board",
     "source": "github"

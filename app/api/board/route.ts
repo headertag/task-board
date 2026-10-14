@@ -2,19 +2,12 @@ import { getBoardPrincipal, authFailure, requireMigrationFreeze } from '../../au
 import { AuthError, requirePermission, type AuthPrincipal } from '../../../lib/auth';
 import { database, imageStorage } from '../../../lib/db';
 import { BoardService, AppError } from '../../../lib/service';
-import { execute } from '../../../lib/operations';
+import { execute, readOperations, writeOperations } from '../../../lib/operations';
 
 export const dynamic = 'force-dynamic';
 
-const readActions = new Set([
-  'get_comment', 'list_comments', 'list_tasks', 'get_task', 'export_tasks',
-  'export_backup_page', 'export_migration_page', 'preview_import', 'list_snapshots', 'get_snapshot',
-]);
-const writeActions = new Set([
-  'add_comment', 'edit_comment', 'archive_comment', 'restore_comment',
-  'create_task', 'update_task', 'complete_task', 'archive_task', 'restore_task',
-  'import_tasks', 'seed_samples',
-]);
+const readActions = readOperations;
+const writeActions = new Set([...writeOperations, 'seed_samples']);
 
 async function authenticated(request: Request): Promise<AuthPrincipal> {
   const principal = await getBoardPrincipal(request);
@@ -31,7 +24,7 @@ export async function POST(request: Request) {
   try {
     const principal = await authenticated(request);
     const body = await request.text();
-    if (body.length > 1500000) throw new AppError(413, 'too_large', 'Import is too large');
+    if (body.length > 3000000) throw new AppError(413, 'too_large', 'Import is too large');
     let input: any;
     try { input = JSON.parse(body); }
     catch { throw new AppError(400, 'invalid_json', 'Request is not valid JSON'); }

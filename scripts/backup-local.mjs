@@ -1,3 +1,4 @@
+import {prepareAttachment} from '../lib/attachments.ts';
 // Private, read-only capture. No credentials in arguments, redirects, or logs.
 import {constants} from 'node:fs';
 import {open, lstat, link, unlink} from 'node:fs/promises';
@@ -5,7 +6,6 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {validateBackup} from '../lib/backup.ts';
-import {normalizePng} from '../lib/image.ts';
 import {hash, stable} from '../lib/safety.ts';
 
 const messages = {
@@ -169,7 +169,7 @@ export async function backupLocal(options) {
     try {
       verified = await validateBackup(pages);
       for (const image of verified.attachments) {
-        const normalized = await normalizePng(verified.blobs.get(image.id));
+        const normalized = await prepareAttachment(verified.blobs.get(image.id),image.contentType);
         if (normalized.width !== image.width || normalized.height !== image.height) fail('invalid_backup');
       }
     } catch { fail('invalid_backup'); }
