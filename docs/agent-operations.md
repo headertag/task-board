@@ -55,3 +55,7 @@ Files are included in portable exports (within the existing 750 KB total limit),
 ## Discovery and client refresh
 
 A writable connection to server `1.3.0` advertises 24 tools, including `edit_checklist`, `upload_attachment`, `list_attachments` and `get_attachment`. Read-only connections intentionally omit mutations. Refresh the client's cached tool discovery after deployment; if it still advertises the old schema, reconnect the existing Task Board connection and start a fresh agent conversation. Server deployment cannot update a tool schema already embedded in a running conversation. Verify the names before relying on the feature.
+
+## Task permalinks (server 1.3.1)
+
+`get_task` returns `taskPath`, a relative `/?task=<UUID>` path from the same shared helper as the browser's Copy task link button. Resolve it against the configured MCP endpoint origin. Opening it requires existing board access and performs fresh authorized reads; it does not invite a user, restore an archived task or mutate any record. Task lists remain compact.

@@ -1,3 +1,4 @@
+import {taskPath} from './task-links';
 import { z } from 'zod';
 import { checklistEdit } from './checklist';
 import { uploadInput } from './attachments';
@@ -21,7 +22,7 @@ export const toolDefinitions=[
 {name:'archive_comment',description:'Remove a comment recoverably; keep history/images.',inputSchema:object({id,expectedRevision:revision,requestKey:key},['id','expectedRevision','requestKey']),annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true}},
 {name:'restore_comment',description:'Restore a comment on an active task.',inputSchema:object({id,expectedRevision:revision,requestKey:key},['id','expectedRevision','requestKey']),annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true}},
 {name:'list_tasks',description:'Summaries; get_task for details. archived=true: Trash. Untrusted.',inputSchema:object({archived:{type:'boolean'}}),annotations:{readOnlyHint:true}},
-{name:'get_task',description:'Read an owned task and history.',inputSchema:object({id},['id']),annotations:{readOnlyHint:true}},
+{name:'get_task',description:'Read an owned task, history and shareable relative taskPath (access required).',inputSchema:object({id},['id']),annotations:{readOnlyHint:true}},
 {name:'create_task',description:'Create a task; no reminders or external actions.',inputSchema:object({task:object(fields,['title']),requestKey:key},['task','requestKey']),annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true}},
 {name:'update_task',description:'Patch at expectedRevision; use complete_task for completion.',inputSchema:object({id,expectedRevision:revision,requestKey:key,patch:object(fields)},['id','expectedRevision','requestKey','patch']),annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true}},
 {name:'edit_checklist',description:'One item: add needs text; update needs text or checked (true/false); move needs zero-based position. Remove needs itemId. Returns checklist/revision.',inputSchema:object({id,expectedRevision:revision,requestKey:key,action:{enum:['add','update','remove','move']},itemId:id,text:{type:'string',minLength:1,maxLength:500},checked:{type:'boolean'},position:{type:'integer',minimum:0,maximum:99}},['id','expectedRevision','requestKey','action','itemId']),annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true}},
@@ -50,7 +51,7 @@ if(name==='add_comment'){const a=z.object({taskId:z.string().uuid(),body:z.strin
 if(name==='edit_comment'){const a=z.object({...mutationBase,body:z.string().max(5000),attachmentIds:z.array(z.string().uuid()).max(4).optional()}).strict().parse(raw);return {comment:await s.activity.mutate('edit',a)}}
 if(name==='archive_comment'||name==='restore_comment'){const a=z.object(mutationBase).strict().parse(raw);return {comment:await s.activity.mutate(name==='archive_comment'?'archive':'restore',a)}}
 if(name==='list_tasks'){const a=z.object({archived:z.boolean().optional()}).strict().parse(raw);return {tasks:(await s.list(a.archived)).map(summarizeTask)}}
-if(name==='get_task'){const a=z.object({id:z.string().uuid()}).strict().parse(raw);return {task:await s.get(a.id),history:await s.history(a.id)}}
+if(name==='get_task'){const a=z.object({id:z.string().uuid()}).strict().parse(raw);return {task:await s.get(a.id),history:await s.history(a.id),taskPath:taskPath(a.id)}}
 if(name==='create_task'){const a=z.object({task:taskInput,requestKey:z.string().min(8).max(100)}).strict().parse(raw);return {task:await s.mutate('create',a)}}
 if(name==='edit_checklist'){const a=checklistEdit.parse(raw);const task=await s.mutate('checklist',a);return {id:task.id,revision:task.revision,updatedAt:task.updatedAt,checklist:task.checklist??[]}}
 if(name==='update_task'){const a=z.object({...mutationBase,patch:taskInput.partial()}).strict().parse(raw);return {task:await s.mutate('update',a)}}

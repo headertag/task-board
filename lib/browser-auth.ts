@@ -1,3 +1,4 @@
+import { taskLinkSelection, taskPath } from './task-links';
 import { AuthError, authorizeWorkosUser, verifyBrowserIdToken, type AuthConfig, type AuthDependencies } from './auth';
 import { authJSON } from './auth-json';
 
@@ -22,11 +23,13 @@ export function readBrowserConfig(bindings: BrowserBindings, auth: AuthConfig): 
 }
 
 export function safeReturnTo(value: string | null): string {
-  if (!value?.startsWith('/') || value.startsWith('//')) return '/';
+  if (!value?.startsWith('/') || value.startsWith('//') || /[\\\x00-\x20]/.test(value)) return '/';
   let url: URL;
   try { url = new URL(value, 'https://board.example'); } catch { return '/'; }
-  if (url.origin !== 'https://board.example' || url.pathname.startsWith('/auth/')) return '/';
-  return url.pathname + url.search + url.hash;
+  if (url.origin !== 'https://board.example' || url.pathname !== '/' || url.hash) return '/';
+  if ([...url.searchParams.keys()].some(key=>key!=='task')) return '/';
+  const selection=taskLinkSelection(url.search);
+  return selection.id&&!selection.invalid?taskPath(selection.id):'/';
 }
 
 function base64url(bytes: Uint8Array): string { return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }

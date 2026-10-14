@@ -228,8 +228,8 @@ function cookieFrom(response, name) {
   assert.ok(value, name + ' is issued');
   return value.split(';')[0];
 }
-async function beginBrowserAuthorization(subject = 'user_synthetic_a', idClaims = {}) {
-  const started = await signin.GET(request('/auth/signin?return_to=%2F', undefined, {}, 'GET'));
+async function beginBrowserAuthorization(subject = 'user_synthetic_a', idClaims = {}, returnTo = '/') {
+  const started = await signin.GET(request('/auth/signin?return_to='+encodeURIComponent(returnTo), undefined, {}, 'GET'));
   assert.equal(started.status, 302);
   const authorize = new URL(started.headers.get('location'));
   assert.equal(authorize.origin, issuer);
@@ -306,6 +306,23 @@ test('real browser PKCE/state/ID-token callback, browser API, and MCP expose the
   assert.equal(initialized.status, 200);
   const authenticatedGet = await mcp.GET(request('/mcp', undefined, bearer(await token()), 'GET'));
   assert.equal(authenticatedGet.status, 405);
+});
+
+test('task permalinks survive real sign-in and expose the same authorized path through MCP', async () => {
+  const path='/?task='+taskA.id;
+  globalThis.__authRoutePageHeaders = new Headers();
+  await assert.rejects(()=>requireBoardPrincipal(path),error=>error.location==='/auth/signin?return_to='+encodeURIComponent(path));
+  const authorization=await beginBrowserAuthorization('user_synthetic_a',{},path);
+  const completed=await callback.GET(request(authorization.callbackPath,undefined,{cookie:authorization.transactionCookie},'GET'));
+  assert.equal(completed.status,303);
+  assert.equal(completed.headers.get('location'),path);
+  const agent=await rpcValue(await rpcCall('get_task',{id:taskA.id},bearer(await token())));
+  assert.equal(agent.taskPath,path);
+  for(const destination of ['//foreign.example/','/api/board','/?task=malformed']) {
+    const tx=await beginBrowserAuthorization('user_synthetic_a',{},destination);
+    const result=await callback.GET(request(tx.callbackPath,undefined,{cookie:tx.transactionCookie},'GET'));
+    assert.equal(result.headers.get('location'),'/');
+  }
 });
 
 test('MCP resource discovery returns configured issuer and relays genuine authorization-server PKCE metadata', async () => {
@@ -759,7 +776,7 @@ test('web/MCP checklist and file parity: real sessions, discovery, retries, down
   const names=(await (await mcp.POST(rpcRequest('tools/list',null,headers))).json()).result.tools.map(t=>t.name);
   for(const name of ['edit_checklist','upload_attachment','list_attachments','get_attachment'])assert.ok(names.includes(name));
   const initialized=(await (await mcp.POST(rpcRequest('initialize',null,headers))).json()).result;
-  assert.equal(initialized.serverInfo.version,'1.3.0');
+  assert.equal(initialized.serverInfo.version,'1.3.1');
   let task=(await rpcValue(await rpcCall('create_task',{task:{title:'Synthetic parity test'},requestKey:'parity-create-task'},headers))).task;
   const itemId=crypto.randomUUID();
   for(const [index,edit] of [{action:'add',text:'Film'},{action:'update',text:'Renamed film'},{action:'update',checked:true},{action:'update',checked:false},{action:'remove'}].entries()){

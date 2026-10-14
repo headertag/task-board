@@ -85,3 +85,9 @@ Migrations are schema-only, versioned source. Runtime data is stored by the plat
 ## License
 
 Application code is MIT licensed. Preserve the MIT notices for the vendored Sites Vite integration and shadcn CSS. Dependencies retain their own licenses.
+
+### Task links
+
+Open a saved task and choose **Copy task link**, or copy the address bar. Links use `/?task=<task UUID>` and reopen details after sign-in, including Reference, Closed and Trash tasks. They grant no access: recipients must already be allowed on the same board. Closing details returns to the board; Back/Forward preserves the board view and guards unsaved drafts and writes. Archived links never restore a task.
+
+MCP `get_task` returns the same relative `taskPath`; resolve it against the board origin (the origin of the MCP endpoint) to share a link. No separate sharing mutation or invitation is needed.
