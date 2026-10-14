@@ -776,7 +776,7 @@ test('web/MCP checklist and file parity: real sessions, discovery, retries, down
   const names=(await (await mcp.POST(rpcRequest('tools/list',null,headers))).json()).result.tools.map(t=>t.name);
   for(const name of ['edit_checklist','upload_attachment','list_attachments','get_attachment'])assert.ok(names.includes(name));
   const initialized=(await (await mcp.POST(rpcRequest('initialize',null,headers))).json()).result;
-  assert.equal(initialized.serverInfo.version,'1.3.1');
+  assert.equal(initialized.serverInfo.version,'1.3.2');
   let task=(await rpcValue(await rpcCall('create_task',{task:{title:'Synthetic parity test'},requestKey:'parity-create-task'},headers))).task;
   const itemId=crypto.randomUUID();
   for(const [index,edit] of [{action:'add',text:'Film'},{action:'update',text:'Renamed film'},{action:'update',checked:true},{action:'update',checked:false},{action:'remove'}].entries()){
@@ -799,5 +799,42 @@ test('web/MCP checklist and file parity: real sessions, discovery, retries, down
   globalThis.__authRouteEnv.TASK_BOARD_READ_ONLY='true';
   for(const [name,input] of [['upload_attachment',{...args,requestKey:'parity-frozen-upload'}],['edit_checklist',{id:task.id,expectedRevision:task.revision,itemId,requestKey:'parity-frozen-check',action:'add',text:'Denied'}]]){
     assert.equal((await rpcCall(name,input,headers)).status,403);assert.equal((await apiCall(name,input,browser)).status,403);
+  }
+});
+
+
+test('private raster previews preserve original files and reject active content regardless of extension', async () => {
+  const session=await browserSession(), browser={cookie:session.cookie,origin};
+  const headers=bearer(await token());
+  const fixtures=[
+    {filename:'original.jpeg',bytes:Buffer.from([255,216,255,224,0,2,255,217]),type:'image/jpeg'},
+    {filename:'original.PNG',bytes:Buffer.from(png),type:'image/png'},
+    {filename:'original.gif',bytes:Buffer.from('GIF89a'+'x'.repeat(10)),type:'image/gif'},
+    {filename:'original.webp',bytes:Buffer.from('RIFFxxxxWEBPVP8 '+'x'.repeat(10)),type:'image/webp'},
+    {filename:'pretend.jpg',bytes:Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'),type:null},
+    {filename:'page.png',bytes:Buffer.from('<!doctype html><script>alert(1)</script>'),type:null},
+    {filename:'report.pdf',bytes:Buffer.from('%PDF-1.4 fictional fixture'),type:null},
+  ];
+  for(const [i,fixture] of fixtures.entries()) {
+    const attachment=await serviceA.activity.upload(taskA.id,'preview-fixture-'+i,fixture.bytes,fixture.filename,'application/octet-stream');
+    const path='/api/images?id='+attachment.id+'&preview=1';
+    const result=await images.GET(request(path,undefined,browser,'GET'));
+    assert.equal(result.status,fixture.type?200:415);
+    if(fixture.type) {
+      assert.equal(result.headers.get('content-type'),fixture.type);
+      assert.equal(result.headers.get('content-disposition'),'inline');
+      assert.equal(result.headers.get('x-content-type-options'),'nosniff');
+      assert.match(result.headers.get('cache-control'),/private, no-store/);
+      assert.match(result.headers.get('content-security-policy'),/sandbox/);
+      assert.deepEqual(Buffer.from(await result.arrayBuffer()),fixture.bytes);
+      const mcpResult=await rpcValue(await rpcCall('get_attachment',{id:attachment.id},headers));
+      assert.equal(mcpResult.previewPath,path);
+    }
+    const download=await images.GET(request('/api/images?id='+attachment.id,undefined,browser,'GET'));
+    assert.equal(download.headers.get('content-type'),'application/octet-stream');
+    assert.match(download.headers.get('content-disposition'),/^attachment/);
+    assert.deepEqual(Buffer.from(await download.arrayBuffer()),fixture.bytes);
+    await denied(await images.GET(request(path,undefined,{},'GET')),401);
+    await denied(await images.GET(request(path,undefined,bearer(await token({sub:'user_synthetic_b'})),'GET')),404);
   }
 });

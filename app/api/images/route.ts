@@ -1,3 +1,4 @@
+import {rasterContentType} from '../../../lib/attachment-preview';
 import { getBoardPrincipal, authFailure } from '../../authentication';
 import { AuthError, requirePermission, type AuthPrincipal } from '../../../lib/auth';
 import { database, imageStorage } from '../../../lib/db';
@@ -35,6 +36,13 @@ export async function GET(request: Request) {
     const service = new BoardService(database(), principal.ownerId, imageStorage());
     const id = new URL(request.url).searchParams.get('id') || '';
     const { metadata, object } = await service.activity.image(id);
+    if(new URL(request.url).searchParams.get('preview')==='1') {
+      const bytes=await boundedBytes(object.body,IMAGE_LIMIT);
+      if(bytes.length!==metadata.size)throw new AppError(503,'file_unavailable','Stored file is incomplete');
+      const contentType=rasterContentType(bytes);
+      if(!contentType)throw new AppError(415,'preview_unavailable','This file is available as a download');
+      return new Response(bytes as BodyInit,{headers:{...privateHeaders,'Content-Type':contentType,'Content-Length':String(bytes.length),'Content-Disposition':'inline','Content-Security-Policy':"sandbox; default-src 'none'"}});
+    }
     return new Response(object.body, { headers: { ...privateHeaders, 'Content-Type': metadata.contentType, 'Content-Length': String(metadata.size), 'Content-Disposition': metadata.contentType==='image/png'?'inline; filename="task-image.png"':`attachment; filename="attachment"; filename*=UTF-8''${encodeURIComponent(metadata.filename)}`, 'Content-Security-Policy': "sandbox; default-src 'none'" } });
   } catch (error) { return failure(request, error); }
 }
