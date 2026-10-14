@@ -13,10 +13,10 @@ This repository contains application code and fictional fixtures only. It does n
 - Validated import preview, copy-only imports, portable JSON exports, and recovery snapshots
 - Shared browser/API/MCP operations, with storage-owner isolation and explicitly allowed collaborators
 - Owner-managed Google email access with view or edit permissions, verified identity pinning and revocation
-- Saved task checklists with checkboxes and crossed-out completed items
+- Saved task checklists with stable item IDs, item-level MCP editing, and crossed-out completed items
 - Spacious read-first task details with separate editing and unsaved-draft protection
 - Safe clickable source links, product cards and address/map cards without external preview fetching
-- Durable comments with independent revisions, recoverable removal, private normalized image attachments
+- Durable comments with independent revisions, recoverable removal, private normalized image attachments plus exact-byte PDF and generic file uploads (2 MiB each)
 - Checksummed complete backups containing tasks, all history, comments, private images and recovery snapshots
 
 No external task ingestion, notifications, reminders, or automatic synchronization is included. The fictional examples are generated only when a user's board has no records.
@@ -59,7 +59,8 @@ Start with the [agent connection guide](docs/agent-setup.md) and [operation cont
 Stateless JSON-RPC over `POST /mcp` advertises protocol version `2025-03-26` and supports initialization, discovery, and these tools:
 
 - `list_tasks`, `get_task`
-- `create_task`, `update_task`, `complete_task`
+- `create_task`, `update_task`, `complete_task`, `edit_checklist`
+- `upload_attachment`, `list_attachments`, `get_attachment`
 - `archive_task`, `restore_task`
 - `list_comments`, `get_comment`, `add_comment`, `edit_comment`, `archive_comment`, `restore_comment`
 - `export_tasks`, `export_backup_page`, `export_migration_page`

@@ -19,3 +19,5 @@ node --experimental-transform-types --import ./tests/loader.mjs scripts/measure-
 ```
 
 `tests/mcp-metadata.test.mjs` guards the compact byte budget and the revision, idempotency, privacy, backup and import cues. Schemas remain explicit; they were not replaced by client-dependent `$ref` compression.
+
+Server 1.3.0 adds item-level checklist mutation and three file operations: 24 tools, 14,255 UTF-8 bytes (14,500-byte regression budget). New replies are compact; file bytes require explicit chunk reads.

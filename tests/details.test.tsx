@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 const dom=new JSDOM('<!doctype html><html><body><button id="card">Open task</button></body></html>',{url:'http://localhost'});
 for(const k of ['window','document','navigator','HTMLElement','HTMLInputElement','HTMLFormElement','HTMLSelectElement','HTMLTextAreaElement','Element','Node','NodeFilter','MutationObserver','Event','CustomEvent','KeyboardEvent','MouseEvent','DocumentFragment','getComputedStyle'])Object.defineProperty(globalThis,k,{value:(dom.window as any)[k],configurable:true});
 (globalThis as any).requestAnimationFrame=(f:any)=>setTimeout(f,0);(globalThis as any).cancelAnimationFrame=clearTimeout;(globalThis as any).ResizeObserver=class{observe(){}unobserve(){}disconnect(){}};HTMLElement.prototype.scrollIntoView=function(){};HTMLElement.prototype.hasPointerCapture=()=>false;HTMLElement.prototype.setPointerCapture=()=>{};HTMLElement.prototype.releasePointerCapture=()=>{};window.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}} as any);window.confirm=()=>true;
-const React=await import('react');(globalThis as any).React=React;const {render,screen,fireEvent,waitFor,cleanup,act}=await import('@testing-library/react');const {TaskDetails,SafeText}=await import('../app/task-details');const {validateTask}=await import('../lib/model');
+const React=await import('react');(globalThis as any).React=React;const {render,screen,fireEvent,waitFor,cleanup,act}=await import('@testing-library/react');const {TaskDetails,SafeText}=await import('../app/task-details');const {validateTask}=await import('../lib/model');const {editChecklist}=await import('../lib/checklist');
 const a={...validateTask({title:'Task A',nextAction:'Read https://example.com/a and <script>bad</script>',evidenceNote:'Unsafe https://user:secret@example.com',resources:[{kind:'product',label:'Sample product',url:'https://example.com/product',address:''},{kind:'location',label:'Sample location',address:'Fictional place',url:''}]}),id:crypto.randomUUID(),revision:1,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),archived:false};const b={...a,id:crypto.randomUUID(),title:'Task B',nextAction:'Second task details'};
 const c={...a,id:crypto.randomUUID(),title:'Newly created task'};let failRefresh=false;
 let resolverA:any,resolverB:any,hold=true,comments:any[]=[],posted:any[]=[],failSave=false,pendingSave:any=null;
-(globalThis as any).fetch=async(_url:string,options:any)=>{if(options.signal?.aborted)throw new DOMException('signal is aborted without reason','AbortError');const {name,args}=JSON.parse(options.body);if(name==='create_task')return Response.json({task:{...c,...args.task}});if(name==='get_task'){if(hold)return new Promise(resolve=>{const fn=()=>resolve(Response.json({task:args.id===a.id?a:args.id===c.id?c:b,history:[]}));if(args.id===a.id)resolverA=fn;else resolverB=fn});return Response.json({task:args.id===a.id?a:args.id===c.id?c:b,history:[]})}if(name==='list_comments'){if(failRefresh){failRefresh=false;throw new Error('Simulated refresh transport error')}return Response.json({comments:comments.filter(x=>x.taskId===args.taskId),attachments:[],nextCursor:null})};if(name==='add_comment'){posted.push(args);comments=[{id:crypto.randomUUID(),taskId:args.taskId,body:args.body,attachmentIds:[],revision:1,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),archived:false},...comments];return Response.json({comment:comments[0]})}if(name==='update_task'){if(pendingSave)return new Promise(resolve=>{pendingSave.resolve=()=>resolve(Response.json({task:{...a,...args.patch,revision:2}}))});if(failSave)return Response.json({message:'Revision conflict test'},{status:409});return Response.json({task:{...a,...args.patch,revision:2}})}throw new Error('Unexpected action '+name)};
+(globalThis as any).fetch=async(_url:string,options:any)=>{if(options.signal?.aborted)throw new DOMException('signal is aborted without reason','AbortError');const {name,args}=JSON.parse(options.body);if(name==='create_task')return Response.json({task:{...c,...args.task}});if(name==='get_task'){if(hold)return new Promise(resolve=>{const fn=()=>resolve(Response.json({task:args.id===a.id?a:args.id===c.id?c:b,history:[]}));if(args.id===a.id)resolverA=fn;else resolverB=fn});return Response.json({task:args.id===a.id?a:args.id===c.id?c:b,history:[]})}if(name==='list_attachments')return Response.json({attachments:[]});if(name==='list_comments'){if(failRefresh){failRefresh=false;throw new Error('Simulated refresh transport error')}return Response.json({comments:comments.filter(x=>x.taskId===args.taskId),attachments:[],nextCursor:null})};if(name==='add_comment'){posted.push(args);comments=[{id:crypto.randomUUID(),taskId:args.taskId,body:args.body,attachmentIds:[],revision:1,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),archived:false},...comments];return Response.json({comment:comments[0]})}if(name==='update_task'){if(pendingSave)return new Promise(resolve=>{pendingSave.resolve=()=>resolve(Response.json({task:{...a,...args.patch,revision:2}}))});if(failSave)return Response.json({message:'Revision conflict test'},{status:409});return Response.json({task:{...a,...args.patch,revision:2}})}throw new Error('Unexpected action '+name)};
 const focus={current:document.getElementById('card')},ref=React.createRef<any>();let closed=0;const props={open:true,taskId:a.id,onClose:()=>{closed++},onChanged:async()=>{},returnFocus:focus,ref};const view=render(<TaskDetails {...props}/>);
 await waitFor(()=>assert.ok(resolverA));view.rerender(<TaskDetails {...props} taskId={b.id}/>);await waitFor(()=>assert.ok(resolverB));await act(async()=>resolverB());await screen.findByText('Task B');await act(async()=>resolverA());assert.ok(screen.getByText('Task B'));assert.equal(screen.queryByText('Task A'),null);console.log('PASS A-to-B stale-response isolation');
 view.rerender(<TaskDetails {...props} taskId={a.id}/>);await waitFor(()=>assert.ok(screen.getByText('Loading task…')));view.rerender(<TaskDetails {...props} open={false}/>);await act(async()=>resolverA());assert.equal(screen.queryByRole('dialog'),null);console.log('PASS close-before-load remains closed');
@@ -22,17 +22,20 @@ cleanup();
 const itemA={id:crypto.randomUUID(),text:'Milk',checked:false},itemB={id:crypto.randomUUID(),text:'Watch Arrival',checked:true};
 const checklistTask={...a,title:'Shopping and movies',checklist:[itemA,itemB]};
 let savedTask:any=structuredClone(checklistTask),writeMode:'normal'|'hold'|'lose-response'='normal',releaseWrite:(()=>void)|null=null;
+const savedFiles:any[]=[],fileUploads:any[]=[];
 const checklistWrites:any[]=[],checklistCreates:any[]=[],replies=new Map<string,{args:any,task:any}>();
 (globalThis as any).fetch=async(_url:string,options:any)=>{
  const {name,args}=JSON.parse(options.body);
  if(name==='get_task')return Response.json({task:structuredClone(savedTask),history:[]});
- if(name==='list_comments')return Response.json({comments:[],attachments:[],nextCursor:null});
+ if(name==='list_attachments')return Response.json({attachments:savedFiles});
+ if(name==='upload_attachment'){fileUploads.push(args);const attachment={id:crypto.randomUUID(),taskId:args.taskId,filename:args.filename,contentType:args.contentType,size:Buffer.from(args.dataBase64,'base64').length,width:0,height:0,sha256:'a'.repeat(64),createdAt:new Date().toISOString()};savedFiles.push(attachment);return Response.json({attachment})}if(name==='list_comments')return Response.json({comments:[],attachments:[],nextCursor:null});
  if(name==='create_task'){checklistCreates.push(args);savedTask={...a,...args.task,id:crypto.randomUUID(),revision:1};return Response.json({task:savedTask})}
- if(name==='update_task'){
+ if(name==='update_task'||name==='edit_checklist'){
+  const output=(task:any)=>name==='edit_checklist'?{id:task.id,revision:task.revision,updatedAt:task.updatedAt,checklist:task.checklist}:{task};
   checklistWrites.push(structuredClone(args));
-  const replay=replies.get(args.requestKey);if(replay){assert.deepEqual(args,replay.args);return Response.json({task:replay.task})}
+  const replay=replies.get(args.requestKey);if(replay){assert.deepEqual(args,replay.args);return Response.json(output(replay.task))}
   if(args.expectedRevision!==savedTask.revision)return Response.json({error:'revision_conflict',message:'Checklist changed elsewhere. Reload before saving.'},{status:409});
-  const apply=()=>{savedTask={...savedTask,...args.patch,revision:savedTask.revision+1};replies.set(args.requestKey,{args:structuredClone(args),task:structuredClone(savedTask)});return Response.json({task:savedTask})};
+  const apply=()=>{savedTask={...savedTask,...(name==='edit_checklist'?{checklist:editChecklist(savedTask,args)}:args.patch),revision:savedTask.revision+1};replies.set(args.requestKey,{args:structuredClone(args),task:structuredClone(savedTask)});return Response.json(output(savedTask))};
   if(writeMode==='hold')return new Promise(resolve=>{releaseWrite=()=>resolve(apply())});
   const response=apply();if(writeMode==='lose-response'){writeMode='normal';throw new Error('Response was lost after saving')};return response;
  }
@@ -62,8 +65,8 @@ assert.equal((screen.getByRole('checkbox',{name:'Milk'}) as HTMLInputElement).di
 assert.equal((screen.getByRole('checkbox',{name:'Watch Arrival'}) as HTMLInputElement).disabled,true);
 assert.equal((screen.getByRole('button',{name:'Edit task'}) as HTMLButtonElement).disabled,true);assert.equal(ref.current.canLeave(),false);
 await act(async()=>releaseWrite!());await waitFor(()=>assert.equal((screen.getByRole('checkbox',{name:'Milk'}) as HTMLInputElement).checked,true));
-assert.deepEqual(Object.keys(checklistWrites[0].patch),['checklist']);assert.equal(checklistWrites[0].expectedRevision,1);
-assert.deepEqual(checklistWrites[0].patch.checklist,[{...itemA,checked:true},itemB]);assert.equal(screen.getByText('Milk').tagName,'S');
+assert.equal(checklistWrites[0].action,'update');assert.equal(checklistWrites[0].itemId,itemA.id);assert.equal(checklistWrites[0].expectedRevision,1);
+assert.equal(checklistWrites[0].checked,true);assert.equal(screen.getByText('Milk').tagName,'S');
 console.log('PASS saved checkbox uses a revision-checked checklist-only patch and blocks writes/navigation while saving');
 
 resetChecklist();checklistView=openChecklist();await screen.findByRole('checkbox',{name:'Milk'});writeMode='lose-response';
@@ -117,3 +120,14 @@ fireEvent.click(screen.getByRole('checkbox',{name:'Milk'}));await screen.findByT
 assert.equal((screen.getByRole('checkbox',{name:'Milk'}) as HTMLInputElement).checked,true);assert.equal(screen.queryByRole('button',{name:'Retry checklist change'}),null);assert.equal(checklistWrites.length,1);
 console.log('PASS saved checklist remains reconciled if the subsequent board refresh fails');
 cleanup();
+
+resetChecklist();openChecklist();await screen.findByRole('checkbox',{name:'Milk'});
+const pdfBytes=Buffer.from('%PDF-1.4 Synthetic fixture');
+const pdf={name:'fixture.pdf',type:'application/pdf',size:pdfBytes.length,lastModified:1,arrayBuffer:async()=>pdfBytes.buffer.slice(pdfBytes.byteOffset,pdfBytes.byteOffset+pdfBytes.length)};
+fireEvent.change(screen.getByLabelText('Upload task files'),{target:{files:[pdf]}});
+await screen.findByRole('link',{name:/fixture.pdf/});assert.equal(fileUploads.length,1);assert.equal(fileUploads[0].contentType,'application/octet-stream');assert.deepEqual(Buffer.from(fileUploads[0].dataBase64,'base64'),pdfBytes);
+assert.equal(screen.getByRole('link',{name:/fixture.pdf/}).getAttribute('download'),'fixture.pdf');
+resetChecklist();openChecklist();await screen.findByRole('link',{name:/fixture.pdf/});
+fireEvent.change(screen.getByLabelText('Upload task files'),{target:{files:[{...pdf,size:2097153}]}});await screen.findByText('Choose a nonempty file up to 2 MB');assert.equal(fileUploads.length,1);
+resetChecklist();openChecklist({canWrite:false});await screen.findByRole('link',{name:/fixture.pdf/});assert.equal(screen.queryByRole('button',{name:'Add image / PDF / file'}),null);
+console.log('PASS file upload uses shared operation, retains exact PDF bytes, reloads saved links and enforces limits/read-only UI');

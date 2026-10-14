@@ -120,3 +120,31 @@ const trashSummary=(await execute(a,'list_tasks',{archived:true})).tasks.find(t=
 assert.equal(trashSummary.archived,true);assert.equal(trashSummary.revision,trashed.revision);assert.equal(Object.hasOwn(trashSummary,'evidenceNote'),false);
 assert.equal((await execute(b,'list_tasks',{})).tasks.some(t=>t.id===verbose.id),false);
 console.log('PASS compact lists omit narrative data, preserve revisions/Trash/isolation, and full details remain available');
+
+// Item operations preserve concurrent content, stable IDs and replay receipts.
+const checklistService=new BoardService(db,'checklist-operations');
+let ct=await checklistService.mutate('create',{task:{title:'Synthetic item operations',evidenceNote:'Keep these notes'},requestKey:'item-create-task'});
+const firstItem=crypto.randomUUID(),secondItem=crypto.randomUUID();
+const itemArgs=(action,itemId,extra={})=>({id:ct.id,expectedRevision:ct.revision,requestKey:crypto.randomUUID(),action,itemId,...extra});
+const runItem=async args=>{const out=await execute(checklistService,'edit_checklist',args);ct=await checklistService.get(ct.id);assert.deepEqual(out,{id:ct.id,revision:ct.revision,updatedAt:ct.updatedAt,checklist:ct.checklist});assert.equal(ct.evidenceNote,'Keep these notes');assert.equal(ct.status,'ToDo');return out};
+const addArgs=itemArgs('add',firstItem,{text:'First film'});const added=await runItem(addArgs);
+await runItem(itemArgs('add',secondItem,{text:'Second film',checked:true,position:0}));
+await runItem(itemArgs('update',firstItem,{text:'Renamed film',checked:true}));
+await runItem(itemArgs('update',firstItem,{checked:false}));
+await runItem(itemArgs('move',firstItem,{position:0}));assert.equal(ct.checklist[0].id,firstItem);
+await assert.rejects(()=>runItem(itemArgs('add',firstItem.toUpperCase(),{text:'Duplicate'})),e=>e.code==='duplicate_item');
+await assert.rejects(()=>runItem(itemArgs('update',crypto.randomUUID(),{checked:true})),e=>e.code==='item_not_found');
+for(const args of [itemArgs('add',crypto.randomUUID()),itemArgs('update',firstItem),itemArgs('remove',firstItem,{checked:false}),itemArgs('move',firstItem,{position:99}),itemArgs('update',firstItem,{text:' '}),itemArgs('update',firstItem,{text:'x'.repeat(501)})])await assert.rejects(()=>runItem(args));
+await assert.rejects(()=>execute(b,'edit_checklist',itemArgs('update',firstItem,{checked:true})),e=>e.status===404);
+await assert.rejects(()=>execute(checklistService,'edit_checklist',{...itemArgs('update',firstItem,{checked:true}),expectedRevision:1}),e=>e.code==='revision_conflict');
+const removeArgs=itemArgs('remove',firstItem);const removed=await runItem(removeArgs);
+await runItem(itemArgs('update',secondItem,{checked:false}));
+assert.deepEqual(await execute(checklistService,'edit_checklist',removeArgs),removed,'Removal retry returns original receipt after later writes');
+assert.deepEqual(await execute(checklistService,'edit_checklist',addArgs),added,'Add retry does not recreate removed item');
+await assert.rejects(()=>execute(checklistService,'edit_checklist',{...removeArgs,itemId:secondItem}),e=>e.code==='idempotency_conflict');
+const beforeArchive=await checklistService.export();assert.equal(beforeArchive.history.length,ct.revision);
+ct=await checklistService.mutate('archive',{id:ct.id,expectedRevision:ct.revision,requestKey:'item-archive-task'});
+await assert.rejects(()=>execute(checklistService,'edit_checklist',itemArgs('update',secondItem,{checked:true})),e=>e.code==='archived_task');
+const full=await checklistService.mutate('create',{task:{title:'Synthetic full list',checklist:Array.from({length:100},()=>({id:crypto.randomUUID(),text:'Item',checked:false}))},requestKey:'item-limit-task'});
+await assert.rejects(()=>execute(checklistService,'edit_checklist',{id:full.id,expectedRevision:1,requestKey:'item-over-limit',action:'add',itemId:crypto.randomUUID(),text:'Too many'}));
+console.log('PASS item checklist CRUD, check/uncheck, reorder, replay, limits, owner isolation and preserved task history');

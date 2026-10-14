@@ -28,7 +28,7 @@ export const legacyExportSchema=z.object({format:z.literal('task-board-pilot'),v
 
 export const commentSchema=z.object({id:z.string().uuid(),taskId:z.string().uuid(),body:z.string().max(5000),attachmentIds:z.array(z.string().uuid()).max(4),revision:z.number().int().positive(),createdAt:z.string().datetime(),updatedAt:z.string().datetime(),archived:z.boolean()}).strict();
 export type Comment=z.infer<typeof commentSchema>;
-export const attachmentSchema=z.object({id:z.string().uuid(),taskId:z.string().uuid(),filename:z.string().max(160),contentType:z.literal('image/png'),size:z.number().int().positive().max(2097152),width:z.number().int().positive().max(4000),height:z.number().int().positive().max(4000),sha256:z.string().regex(/^[a-f0-9]{64}$/),createdAt:z.string().datetime()}).strict();
+export const attachmentSchema=z.object({id:z.string().uuid(),taskId:z.string().uuid(),filename:z.string().max(160),contentType:z.enum(['image/png','application/octet-stream']),size:z.number().int().positive().max(2097152),width:z.number().int().min(0).max(4000),height:z.number().int().min(0).max(4000),sha256:z.string().regex(/^[a-f0-9]{64}$/),createdAt:z.string().datetime()}).strict();
 export type Attachment=z.infer<typeof attachmentSchema>;
 export const commentEventSchema=z.object({commentId:z.string().uuid(),taskId:z.string().uuid(),action:z.string().max(30),before:commentSchema.nullable(),after:commentSchema,createdAt:z.string().datetime()}).strict();
 export const modernExportSchema=legacyExportSchema.extend({version:z.literal(2),comments:z.array(commentSchema).max(500),commentHistory:z.array(commentEventSchema).max(2000),attachments:z.array(attachmentSchema.extend({dataBase64:z.string().max(1000000)})).max(100)}).strict();

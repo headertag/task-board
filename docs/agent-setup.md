@@ -46,3 +46,5 @@ Keep private deployment URLs, OAuth configuration, task data, tokens and backups
 - [Official registry remote-server example](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/generic-server-json.md#remote-server-example)
 - [Pinned registry schema](https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json)
 - [llms.txt proposal](https://llmstxt.org/)
+
+After upgrading to 1.3.0, refresh cached tools or reconnect the existing connection. A writable connection must advertise `edit_checklist`, `upload_attachment`, `list_attachments`, and `get_attachment`. See [agent operations](agent-operations.md#checklist-items-and-files-server-130) for usage and limits.

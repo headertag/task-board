@@ -395,7 +395,7 @@ test('tampered and duplicate browser cookies fail closed on browser, API, MCP an
 test('read-only MCP tools are filtered and OIDC or write-looking strings never grant mutations/import/uploads', async () => {
   const before = await serviceA.export();
   const mutationNames = [
-    'create_task', 'update_task', 'complete_task', 'archive_task', 'restore_task',
+    'edit_checklist', 'upload_attachment', 'create_task', 'update_task', 'complete_task', 'archive_task', 'restore_task',
     'add_comment', 'edit_comment', 'archive_comment', 'restore_comment', 'import_tasks',
   ];
   for (const client_id of ['synthetic-read-client', 'dynamic-unknown-client', 'https://client.example.com/client.json']) {
@@ -425,7 +425,7 @@ test('owner-delegated DCR/CIMD agents discover writes and create/edit/archive ta
     const headers = bearer(await token({ client_id, scope: 'openid profile email' }));
     const listed = await mcp.POST(rpcRequest('tools/list', null, headers));
     const names = (await listed.json()).result.tools.map(tool => tool.name);
-    for (const name of ['create_task', 'update_task', 'complete_task', 'archive_task', 'restore_task', 'add_comment', 'edit_comment', 'archive_comment', 'restore_comment', 'import_tasks']) assert.ok(names.includes(name), name);
+    for (const name of ['edit_checklist', 'upload_attachment', 'create_task', 'update_task', 'complete_task', 'archive_task', 'restore_task', 'add_comment', 'edit_comment', 'archive_comment', 'restore_comment', 'import_tasks']) assert.ok(names.includes(name), name);
     const created = await rpcValue(await rpcCall('create_task', { task: { title: 'Synthetic delegated task ' + index }, requestKey: 'delegated-create-' + index }, headers));
     const task = created.task;
     const edit = { id: task.id, expectedRevision: task.revision, patch: { title: 'Synthetic delegated edit ' + index }, requestKey: 'delegated-edit-' + index };
@@ -750,4 +750,37 @@ test('browser cookies are bound to the configured origin even on alternate Worke
   const session = await browserSession();
   const alternate = new Request('https://alternate.example/api/board',{method:'POST',headers:{cookie:session.cookie,origin:'https://alternate.example','content-type':'application/json'},body:JSON.stringify({name:'list_tasks',args:{}})});
   await denied(await board.POST(alternate),403,'origin_mismatch');
+});
+
+test('web/MCP checklist and file parity: real sessions, discovery, retries, downloads and freeze', async () => {
+  globalThis.__authRouteEnv.TASK_BOARD_AUTH_POLICY=JSON.stringify(delegatedPolicy());
+  const headers=bearer(await token({client_id:'dynamic-unknown-client'}));
+  const session=await browserSession(), browser={cookie:session.cookie,origin};
+  const names=(await (await mcp.POST(rpcRequest('tools/list',null,headers))).json()).result.tools.map(t=>t.name);
+  for(const name of ['edit_checklist','upload_attachment','list_attachments','get_attachment'])assert.ok(names.includes(name));
+  const initialized=(await (await mcp.POST(rpcRequest('initialize',null,headers))).json()).result;
+  assert.equal(initialized.serverInfo.version,'1.3.0');
+  let task=(await rpcValue(await rpcCall('create_task',{task:{title:'Synthetic parity test'},requestKey:'parity-create-task'},headers))).task;
+  const itemId=crypto.randomUUID();
+  for(const [index,edit] of [{action:'add',text:'Film'},{action:'update',text:'Renamed film'},{action:'update',checked:true},{action:'update',checked:false},{action:'remove'}].entries()){
+    const args={id:task.id,expectedRevision:task.revision,itemId,requestKey:'parity-item-'+index,...edit};
+    const result=await rpcValue(await rpcCall('edit_checklist',args,headers));
+    const replay=await apiCall('edit_checklist',args,browser);assert.equal(replay.status,200);assert.deepEqual(await replay.json(),result);
+    task=(await rpcValue(await rpcCall('get_task',{id:task.id},headers))).task;assert.equal(task.revision,result.revision);
+  }
+  const bytes=Buffer.from('%PDF-1.4\nSynthetic parity file\n%%EOF');
+  const args={taskId:task.id,requestKey:'parity-file-upload',filename:'review.pdf',dataBase64:bytes.toString('base64')};
+  const uploaded=await apiCall('upload_attachment',args,browser);assert.equal(uploaded.status,200);
+  const file=await uploaded.json();assert.deepEqual(await rpcValue(await rpcCall('upload_attachment',args,headers)),file);
+  const id=file.attachment.id;
+  assert.deepEqual(await (await apiCall('list_attachments',{taskId:task.id},browser)).json(),await rpcValue(await rpcCall('list_attachments',{taskId:task.id},headers)));
+  const retrieved=await rpcValue(await rpcCall('get_attachment',{id,includeData:true},headers));assert.deepEqual(Buffer.from(retrieved.dataBase64,'base64'),bytes);
+  const download=await images.GET(request('/api/images?id='+id,undefined,browser,'GET'));
+  assert.equal(download.status,200);assert.equal(download.headers.get('content-type'),'application/octet-stream');assert.match(download.headers.get('content-disposition'),/^attachment;/);assert.equal(download.headers.get('x-content-type-options'),'nosniff');assert.match(download.headers.get('content-security-policy'),/sandbox/);assert.deepEqual(Buffer.from(await download.arrayBuffer()),bytes);
+  const foreign=bearer(await token({sub:'user_synthetic_b',client_id:'dynamic-unknown-client'}));
+  const cross=await rpcCall('get_attachment',{id,includeData:true},foreign);const crossed=await cross.json();assert.equal(crossed.result.isError,true);
+  globalThis.__authRouteEnv.TASK_BOARD_READ_ONLY='true';
+  for(const [name,input] of [['upload_attachment',{...args,requestKey:'parity-frozen-upload'}],['edit_checklist',{id:task.id,expectedRevision:task.revision,itemId,requestKey:'parity-frozen-check',action:'add',text:'Denied'}]]){
+    assert.equal((await rpcCall(name,input,headers)).status,403);assert.equal((await apiCall(name,input,browser)).status,403);
+  }
 });

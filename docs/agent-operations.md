@@ -22,7 +22,7 @@ Start a logical edit with a fresh read of the affected task or comment and use t
 - Tasks can contain a `checklist` of up to 100 items: `{ id, text, checked }`. Each item has a stable UUID, plain text (1–500 characters) and a boolean completion state. Read the current task, keep existing item IDs and order, and send a checklist-only `update_task` patch with its current `expectedRevision`. Generate a new item ID only for a new item. On a conflict, re-read and reconcile by item ID rather than overwriting another agent's changes. Checking an item does not complete its parent task; the UI crosses out checked text. An absent checklist on an older task means an empty list. Checklists are retained in task history, exports, backups and imports.
 - `sourceVerifiedAt` must record an actual source check, not an assumed freshness timestamp
 - No operation schedules reminders, notifications or unrelated external actions. Product/location/link cards contain explicit user-supplied links or addresses; the application does not fetch previews or invent prices or locations
-- Comments are plain text. Image IDs must already belong to the same owner and task. Upload images through the authenticated UI; there is no MCP binary-upload tool. The UI normalizes images and the server validates them again
+- Comments are plain text. Image IDs must already belong to the same owner and task. Use `upload_attachment` for files or normalized PNG images; both web and MCP execute the same upload operation
 - Archive is recoverable. Trash retains task history, comments and private images. There is no permanent-delete tool
 
 ## Exports, backups and imports
@@ -34,3 +34,24 @@ For a complete backup, call `export_backup_page` without a cursor, save the retu
 `preview_import` checks a portable v1/v2 export without writes and returns a digest/counts. Inspect the result before the owner-authorized `import_tasks` call. Import requires that digest and creates new record copies, with new IDs/revisions/timestamps and remapped comment/image references. It retains original histories in a source snapshot and captures pre-import state; it never overwrites existing tasks. Reuse the exact request key to resume an uncertain or interrupted import. A different key intentionally creates another set of copies. `list_snapshots` lists the latest 30; `get_snapshot` returns private data.
 
 Complete backup recovery is an offline, isolated operation, not a live restore API. Keep backups outside source control and follow the owner's retention/destination instructions.
+
+## Checklist items and files (server 1.3.0)
+
+Use `edit_checklist` with the task `id`, current `expectedRevision`, a fresh `requestKey`, stable UUID `itemId`, and an `action`:
+
+- `add`: supply `text`; optional `checked` (defaults false) and zero-based `position` (defaults append). Generate the item UUID once and keep it for retries.
+- `update`: supply `text` and/or `checked`. Explicit `true` checks; `false` unchecks.
+- `remove`: omit text/checked/position.
+- `move`: supply zero-based `position` within the existing list.
+
+Replies contain only task ID, revision, updatedAt and checklist. Parent status and other task details are preserved. Exact retries return the original receipt even after further changes or removal; after a revision conflict, read the current task and submit a new intentional operation/key. The existing whole-array `update_task` remains available for deliberate bulk edits.
+
+`upload_attachment` takes `taskId`, `filename`, `dataBase64`, and `requestKey`. Default `contentType: application/octet-stream` retains exact file bytes, including PDF, office files and images. Optional `image/png` validates and normalizes PNG for inline previews. Other formats are private downloads, never rendered as same-origin HTML. Maximum 2 MiB per nonempty file, 100 files / 100 MiB per board, including retained uploads. Upload replies contain metadata only. Saved uploads appear in the task's Attachments section immediately; they may also be linked by ID through `add_comment`/`edit_comment`.
+
+`list_attachments({taskId})` returns saved metadata, including retained comment drafts. `get_attachment({id})` returns metadata only by default. To read bytes, set `includeData:true`, optional `offset` and `length` (default 16 KiB, maximum 64 KiB), then follow `nextOffset` until null. Decode chunks in order and validate the complete SHA-256 from metadata. Do not dump binary/base64 into ordinary conversation context. Task lists never include file bytes.
+
+Files are included in portable exports (within the existing 750 KB total limit), complete backups, copy imports and migration/recovery. Use the updated recovery scripts for backups containing generic files. Existing PNG backups and retry fingerprints remain supported. Downloads require current board access; there are no public bearer links.
+
+## Discovery and client refresh
+
+A writable connection to server `1.3.0` advertises 24 tools, including `edit_checklist`, `upload_attachment`, `list_attachments` and `get_attachment`. Read-only connections intentionally omit mutations. Refresh the client's cached tool discovery after deployment; if it still advertises the old schema, reconnect the existing Task Board connection and start a fresh agent conversation. Server deployment cannot update a tool schema already embedded in a running conversation. Verify the names before relying on the feature.

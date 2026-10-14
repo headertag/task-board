@@ -68,3 +68,35 @@ const statePath=join(destination,'recovery-state.json');const originalState=JSON
 restoredSql.prepare('UPDATE tasks SET revision=revision+1 WHERE id=?').run(captured.tasks[0].id);await assert.rejects(()=>recoverBackup(pages,destination,'recovery-owner'),/Recovered tasks differ/);console.log('PASS matching-marker retries reverify restored rows and reject altered state');
 
 const {mkdirSync,statSync}=await import('node:fs');const unsafeDestination=join(mkdtempSync(join(tmpdir(),'task-board-permissions-')),'shared');mkdirSync(unsafeDestination,{mode:0o755});await assert.rejects(()=>recoverBackup(pages,unsafeDestination,'recovery-owner'),/private directory/);assert.equal(statSync(outcome.database).mode&0o077,0);assert.equal(statSync(destination).mode&0o077,0);console.log('PASS recovery rejects non-private destinations and creates owner-only database files');
+
+// Exact-byte attachments share task ownership, quotas, backup and retry logic.
+const {execute}=await import('../lib/operations.ts');
+const fs=new BoardService(db,'file-tests',r2);
+const ft=await fs.mutate('create',{task:{title:'Synthetic file review'},requestKey:'file-task-01'});
+for(const [name,bytes] of [['report.pdf',new TextEncoder().encode('%PDF-1.4\nSynthetic PDF bytes\n%%EOF')],['note.html',new TextEncoder().encode('<script>untrusted</script>')],['sample.bin',Uint8Array.of(0,255,5,8)]]){
+ const args={taskId:ft.id,requestKey:'file-'+name,filename:name,dataBase64:base64(bytes)};
+ const {attachment:a}=await execute(fs,'upload_attachment',args);
+ assert.equal(a.contentType,'application/octet-stream');assert.equal(a.filename,name);assert.equal(a.width,0);
+ assert.deepEqual(await execute(fs,'upload_attachment',args),{attachment:a});
+ const first=await execute(fs,'get_attachment',{id:a.id,includeData:true,length:3});
+ assert.equal(first.nextOffset,3);assert.deepEqual(Buffer.from(first.dataBase64,'base64'),Buffer.from(bytes.slice(0,3)));
+ const last=await execute(fs,'get_attachment',{id:a.id,includeData:true,offset:3});assert.equal(last.nextOffset,null);
+ assert.deepEqual(Buffer.concat([Buffer.from(first.dataBase64,'base64'),Buffer.from(last.dataBase64,'base64')]),Buffer.from(bytes));
+ assert.equal((await execute(fs,'get_attachment',{id:a.id})).dataBase64,undefined);
+ await assert.rejects(()=>execute(b,'get_attachment',{id:a.id,includeData:true}),e=>e.status===404);
+ await assert.rejects(()=>execute(fs,'upload_attachment',{...args,dataBase64:base64(Uint8Array.of(1))}),e=>e.code==='idempotency_conflict');
+}
+assert.equal((await execute(fs,'list_attachments',{taskId:ft.id})).attachments.length,3);
+await assert.rejects(()=>execute(b,'list_attachments',{taskId:ft.id}),e=>e.status===404);
+for(const dataBase64 of ['', '!!!!', base64(new Uint8Array(2097153))])await assert.rejects(()=>execute(fs,'upload_attachment',{taskId:ft.id,requestKey:'file-invalid',filename:'invalid.bin',dataBase64}));
+const fp=await fs.export(), fpreview=await b.preview(fp);const copied=await b.import(fp,fpreview.digest,'file-copy-01');
+assert.equal((await b.activity.attachments(copied.createdIds[0])).length,3);
+const fbackup=await validateBackup(await capture(fs));assert.equal(fbackup.blobs.size,3);
+const migrated=[];let fc=null;do{const p=await fs.migrationPage(fc,2);migrated.push(p);fc=p.nextCursor}while(fc);
+assert.equal((await validateBackup(migrated)).uploadRetries.length,3);
+const {prepareMigration}=await import('../scripts/migrate-cloudflare.mjs');assert.equal((await prepareMigration(migrated)).rows.attachments.length,3);
+console.log('PASS exact-byte PDF/HTML/binary upload, chunk reads, retry, isolation, import and v2/v3 backup');
+const fileDestination=join(mkdtempSync(join(tmpdir(),'task-board-file-recovery-')),'recovered');
+assert.equal((await recoverBackup(migrated,fileDestination,'file-tests')).complete,true);
+for(const [id,bytes] of fbackup.blobs)assert.deepEqual(new Uint8Array(readFileSync(join(fileDestination,'objects',await hash('file-tests'),id+'.png'))),bytes);
+console.log('PASS exact-byte files survive isolated recovery with original upload retry metadata');

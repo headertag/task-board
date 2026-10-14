@@ -2,6 +2,8 @@ import { getBoardPrincipal, authFailure } from '../../authentication';
 import { AuthError, requirePermission, type AuthPrincipal } from '../../../lib/auth';
 import { database, imageStorage } from '../../../lib/db';
 import { BoardService, AppError } from '../../../lib/service';
+import { execute } from '../../../lib/operations';
+import { base64 } from '../../../lib/safety';
 import { boundedBytes, IMAGE_LIMIT } from '../../../lib/image';
 
 export const dynamic = 'force-dynamic';
@@ -33,7 +35,7 @@ export async function GET(request: Request) {
     const service = new BoardService(database(), principal.ownerId, imageStorage());
     const id = new URL(request.url).searchParams.get('id') || '';
     const { metadata, object } = await service.activity.image(id);
-    return new Response(object.body, { headers: { ...privateHeaders, 'Content-Type': 'image/png', 'Content-Length': String(metadata.size), 'Content-Disposition': 'inline; filename="task-image.png"' } });
+    return new Response(object.body, { headers: { ...privateHeaders, 'Content-Type': metadata.contentType, 'Content-Length': String(metadata.size), 'Content-Disposition': metadata.contentType==='image/png'?'inline; filename="task-image.png"':`attachment; filename="attachment"; filename*=UTF-8''${encodeURIComponent(metadata.filename)}`, 'Content-Security-Policy': "sandbox; default-src 'none'" } });
   } catch (error) { return failure(request, error); }
 }
 
@@ -46,8 +48,8 @@ export async function POST(request: Request) {
     try { filename = decodeURIComponent(request.headers.get('x-file-name') || 'image.png'); }
     catch { throw new AppError(400, 'invalid_image', 'Image filename is not valid'); }
     const service = new BoardService(database(), principal.ownerId, imageStorage());
-    const attachment = await service.activity.upload(request.headers.get('x-task-id') || '', request.headers.get('x-upload-key') || '', bytes, filename);
-    return Response.json({ attachment }, { headers: privateHeaders });
+    const result = await execute(service,'upload_attachment',{taskId:request.headers.get('x-task-id')||'',requestKey:request.headers.get('x-upload-key')||'',filename,contentType:'image/png',dataBase64:base64(bytes)});
+    return Response.json(result, { headers: privateHeaders });
   } catch (error) { return failure(request, error); }
 }
 

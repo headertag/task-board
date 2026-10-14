@@ -20,6 +20,7 @@ function reset(){cleanup();members=structuredClone(initialMembers);calls=[];getF
   if(body.name==='list_tasks')return Response.json({tasks:body.args.archived?[]:[task]});
   if(body.name==='seed_samples')return Response.json({tasks:[task]});
   if(body.name==='get_task')return Response.json({task,history:[]});
+  if(body.name==='list_attachments')return Response.json({attachments:[]});
   if(body.name==='list_comments')return Response.json({comments:[],attachments:[],nextCursor:null});
   throw new Error('Unexpected task operation '+body.name);
  }
