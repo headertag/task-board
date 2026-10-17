@@ -1,3 +1,4 @@
+import {multipartR2} from './multipart-r2.mjs';
 import assert from 'node:assert/strict';
 import {deflateSync} from 'node:zlib';
 import {DatabaseSync} from 'node:sqlite';
@@ -30,6 +31,7 @@ class Prepared{constructor(sql,q,args=[]){this.sql=sql;this.q=q;this.args=args}b
 const sql=new DatabaseSync(':memory:');for(const f of readdirSync(root+'/drizzle').filter(f=>f.endsWith('.sql')))sql.exec(readFileSync(root+'/drizzle/'+f,'utf8'));
 const db={prepare:q=>new Prepared(sql,q),batch:async ps=>{sql.exec('BEGIN');try{const out=ps.map(p=>/^SELECT/i.test(p.q)?{results:sql.prepare(p.q).all(...p.args)}:sql.prepare(p.q).run(...p.args));sql.exec('COMMIT');return out}catch(e){sql.exec('ROLLBACK');throw e}}};
 const objects=new Map();const r2={async put(key,b,opts){if(objects.has(key)&&opts?.onlyIf?.etagDoesNotMatch==='*')return null;objects.set(key,new Uint8Array(b));return {key}},async get(key,opts){const b=objects.get(key);if(!b)return null;const d=opts?.range?b.slice(opts.range.offset,opts.range.offset+opts.range.length):b;return {arrayBuffer:async()=>d.buffer.slice(d.byteOffset,d.byteOffset+d.byteLength),body:new Blob([d]).stream()}}};
+Object.assign(r2,multipartR2(objects));
 const a=new BoardService(db,'owner-a',r2),b=new BoardService(db,'owner-b',r2);
 const t=await a.mutate('create',{task:{title:'Synthetic image review'},requestKey:'task-review-01'});const attachment=await a.activity.upload(t.id,'upload-review-01',good,'fake.png');
 const comment=await a.activity.mutate('add',{taskId:t.id,body:'Synthetic image',attachmentIds:[attachment.id],requestKey:'comment-review-01'});
@@ -88,7 +90,7 @@ for(const [name,bytes] of [['report.pdf',new TextEncoder().encode('%PDF-1.4\nSyn
 }
 assert.equal((await execute(fs,'list_attachments',{taskId:ft.id})).attachments.length,3);
 await assert.rejects(()=>execute(b,'list_attachments',{taskId:ft.id}),e=>e.status===404);
-for(const dataBase64 of ['', '!!!!', base64(new Uint8Array(2097153))])await assert.rejects(()=>execute(fs,'upload_attachment',{taskId:ft.id,requestKey:'file-invalid',filename:'invalid.bin',dataBase64}));
+for(const dataBase64 of ['', '!!!!', base64(new Uint8Array(5*1024*1024+1))])await assert.rejects(()=>execute(fs,'upload_attachment',{taskId:ft.id,requestKey:'file-invalid',filename:'invalid.bin',dataBase64}));
 const fp=await fs.export(), fpreview=await b.preview(fp);const copied=await b.import(fp,fpreview.digest,'file-copy-01');
 assert.equal((await b.activity.attachments(copied.createdIds[0])).length,3);
 const fbackup=await validateBackup(await capture(fs));assert.equal(fbackup.blobs.size,3);

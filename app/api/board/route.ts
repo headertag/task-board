@@ -1,3 +1,5 @@
+import {REQUEST_LIMIT} from '../../../lib/upload-limits';
+import {boundedBytes} from '../../../lib/image';
 import { getBoardPrincipal, authFailure, requireMigrationFreeze } from '../../authentication';
 import { AuthError, requirePermission, type AuthPrincipal } from '../../../lib/auth';
 import { database, imageStorage } from '../../../lib/db';
@@ -23,8 +25,8 @@ async function authenticated(request: Request): Promise<AuthPrincipal> {
 export async function POST(request: Request) {
   try {
     const principal = await authenticated(request);
-    const body = await request.text();
-    if (body.length > 3000000) throw new AppError(413, 'too_large', 'Import is too large');
+    const body = request.body?new TextDecoder().decode(await boundedBytes(request.body,REQUEST_LIMIT)):'';
+    if (body.length > REQUEST_LIMIT) throw new AppError(413, 'too_large', 'Request is too large');
     let input: any;
     try { input = JSON.parse(body); }
     catch { throw new AppError(400, 'invalid_json', 'Request is not valid JSON'); }

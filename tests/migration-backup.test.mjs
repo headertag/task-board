@@ -168,3 +168,16 @@ test('local CLI migration mode requests v3 explicitly and refuses a v2 response'
  respondWithV2=true;await assert.rejects(()=>backupLocal(options),e=>e.code==='invalid_backup');assert.deepEqual(await readFile(out.filename,'utf8'),JSON.stringify(file));
  await assert.rejects(()=>backupLocal({...options,mode:'unsupported'}),e=>e.code==='configuration');
 });
+
+test('more than 100 original files and a large camera image retain bounded cursors and exact v2/v3 recovery',async t=>{
+ const f=await fixture(t);await f.service.mutate('restore',{id:f.task.id,expectedRevision:f.task.revision,requestKey:'original-restore-task'});
+ const camera=Buffer.alloc(3*1024*1024,42);camera.set([255,216,255,224]);
+ const large=await execute(f.service,'upload_attachment',{taskId:f.task.id,requestKey:'original-camera-image',filename:'camera.jpeg',dataBase64:camera.toString('base64')});
+ for(let i=0;i<101;i++)await execute(f.service,'upload_attachment',{taskId:f.task.id,requestKey:'original-many-files-'+i,filename:'file-'+i+'.txt',dataBase64:Buffer.from('Original '+i).toString('base64')});
+ for(const version of [2,3]){
+  const pages=await capture(f,version);assert.equal(pages[0].counts.attachments,104);
+  assert.ok(pages.every(p=>!p.nextCursor||p.nextCursor.length<2000));
+  const verified=await validateBackup(pages);assert.deepEqual(Buffer.from(verified.blobs.get(large.attachment.id)),camera);
+  if(version===3){const root=await area(t);const recovered=await recoverBackup(pages,path.join(root,'recovered'),owner);assert.equal(recovered.complete,true);assert.deepEqual(await readFile(path.join(recovered.objects,large.attachment.id+'.png')),camera)}
+ }
+});
