@@ -29,6 +29,13 @@
       "when": 1790913642089,
       "tag": "0003_smart_karnak",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792254923334,
+      "tag": "0004_original_uploads",
+      "breakpoints": true
     }
   ]
 }

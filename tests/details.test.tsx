@@ -128,7 +128,7 @@ fireEvent.change(screen.getByLabelText('Upload task files'),{target:{files:[pdf]
 await screen.findByRole('link',{name:/fixture.pdf/});assert.equal(fileUploads.length,1);assert.equal(fileUploads[0].contentType,'application/octet-stream');assert.deepEqual(Buffer.from(fileUploads[0].dataBase64,'base64'),pdfBytes);
 assert.equal(screen.getByRole('link',{name:/fixture.pdf/}).getAttribute('download'),'fixture.pdf');
 resetChecklist();openChecklist();await screen.findByRole('link',{name:/fixture.pdf/});
-fireEvent.change(screen.getByLabelText('Upload task files'),{target:{files:[{...pdf,size:2097153}]}});await screen.findByText('Choose a nonempty file up to 2 MB');assert.equal(fileUploads.length,1);
+fireEvent.change(screen.getByLabelText('Upload task files'),{target:{files:[{...pdf,size:100*1024*1024+1}]}});await screen.findByText('Choose a nonempty file up to 100 MB');assert.equal(fileUploads.length,1);
 resetChecklist();openChecklist({canWrite:false});await screen.findByRole('link',{name:/fixture.pdf/});assert.equal(screen.queryByRole('button',{name:'Add image / PDF / file'}),null);
 console.log('PASS file upload uses shared operation, retains exact PDF bytes, reloads saved links and enforces limits/read-only UI');
 

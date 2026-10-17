@@ -79,7 +79,7 @@ await act(async()=>{await webTools.get('open_task_details').execute({id:a.id})})
 await act(async()=>{await webTools.get('open_task_details').execute({id:b.id})});await heading(b.title);assert.equal(window.location.search,'?task='+b.id);
 await go(-1);await heading(a.title);await go(1);await heading(b.title);
 let releaseBytes:any;const uploadingFile={name:'fictional.txt',type:'text/plain',size:3,lastModified:1,arrayBuffer:()=>new Promise(resolve=>{releaseBytes=()=>resolve(new Uint8Array([1,2,3]).buffer)})};
-fireEvent.change(screen.getByLabelText('Upload task files'),{target:{files:[uploadingFile]}});await waitFor(()=>assert.ok(releaseBytes));window.confirm=()=>false;await go(-1);await waitFor(()=>assert.equal(window.location.search,'?task='+b.id));assert.ok(screen.getByText('Uploading file…'));
+fireEvent.change(screen.getByLabelText('Upload task files'),{target:{files:[uploadingFile]}});await waitFor(()=>assert.ok(releaseBytes));window.confirm=()=>false;await go(-1);await waitFor(()=>assert.equal(window.location.search,'?task='+b.id));assert.ok(screen.getAllByText('Uploading fictional.txt…').length);
 window.confirm=()=>true;await go(-1);await heading(a.title);await act(async()=>releaseBytes());assert.equal(window.location.search,'?task='+a.id);
 console.log('PASS task switching, duplicate navigation, Back/Forward and pending-upload cancellation');
 

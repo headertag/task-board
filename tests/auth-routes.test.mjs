@@ -1,3 +1,4 @@
+import {multipartR2} from './multipart-r2.mjs';
 import assert from 'node:assert/strict';
 import { after, beforeEach, test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
@@ -105,6 +106,7 @@ const r2 = {
     return { arrayBuffer: async () => result.buffer.slice(result.byteOffset, result.byteOffset + result.byteLength), body: new Blob([result]).stream() };
   },
 };
+Object.assign(r2,multipartR2(objects));
 globalThis.__authRouteEnv = {
   DB: db, IMAGES: r2,
   WORKOS_AUTHKIT_ISSUER: issuer, WORKOS_MCP_AUDIENCE: audience,
@@ -776,7 +778,7 @@ test('web/MCP checklist and file parity: real sessions, discovery, retries, down
   const names=(await (await mcp.POST(rpcRequest('tools/list',null,headers))).json()).result.tools.map(t=>t.name);
   for(const name of ['edit_checklist','upload_attachment','list_attachments','get_attachment'])assert.ok(names.includes(name));
   const initialized=(await (await mcp.POST(rpcRequest('initialize',null,headers))).json()).result;
-  assert.equal(initialized.serverInfo.version,'1.3.2');
+  assert.equal(initialized.serverInfo.version,'1.4.0');
   let task=(await rpcValue(await rpcCall('create_task',{task:{title:'Synthetic parity test'},requestKey:'parity-create-task'},headers))).task;
   const itemId=crypto.randomUUID();
   for(const [index,edit] of [{action:'add',text:'Film'},{action:'update',text:'Renamed film'},{action:'update',checked:true},{action:'update',checked:false},{action:'remove'}].entries()){
@@ -837,4 +839,32 @@ test('private raster previews preserve original files and reject active content 
     await denied(await images.GET(request(path,undefined,{},'GET')),401);
     await denied(await images.GET(request(path,undefined,bearer(await token({sub:'user_synthetic_b'})),'GET')),404);
   }
+});
+
+
+test('large originals upload through shared resumable web/MCP parts without PNG inflation or storage quotas', async () => {
+ globalThis.__authRouteEnv.TASK_BOARD_AUTH_POLICY=JSON.stringify(delegatedPolicy());
+ const headers=bearer(await token({client_id:'dynamic-unknown-client'}));
+ const session=await browserSession(), browser={cookie:session.cookie,origin};
+ const {UPLOAD_PART_SIZE}=await import('../lib/upload-limits.ts');
+ const {hash}=await import('../lib/safety.ts');
+ const data=Buffer.alloc(UPLOAD_PART_SIZE+123,77);data.set([255,216,255,224],0);
+ const common={taskId:taskA.id,filename:'synthetic-camera-original.jpeg',requestKey:'large-camera-original',totalSize:data.length,sha256:await hash(data)};
+ const first={...common,offset:0,dataBase64:data.subarray(0,UPLOAD_PART_SIZE).toString('base64')};
+ const started=await rpcValue(await rpcCall('upload_attachment',first,headers));assert.equal(started.complete,false);assert.equal(started.nextOffset,UPLOAD_PART_SIZE);
+ assert.equal((await images.GET(request('/api/images?id='+started.uploadId,undefined,browser,'GET'))).status,404);
+ assert.deepEqual(await (await apiCall('upload_attachment',first,browser)).json(),started);
+ // A paused upload resumes even beyond R2's multipart retention period.
+ sqlite.prepare('UPDATE attachment_uploads SET created_at=? WHERE attachment_id=?').run('2020-01-01T00:00:00.000Z',started.uploadId);
+ assert.deepEqual(await (await apiCall('upload_attachment',first,browser)).json(),started);
+ const changed=Buffer.from(data.subarray(0,UPLOAD_PART_SIZE));changed[100]=44;
+ const badRpc=await (await rpcCall('upload_attachment',{...first,dataBase64:changed.toString('base64')},headers)).json();const bad=JSON.parse(badRpc.result.content[0].text);
+ assert.equal(bad.error,'idempotency_conflict');
+ const last={...common,offset:UPLOAD_PART_SIZE,dataBase64:data.subarray(UPLOAD_PART_SIZE).toString('base64')};
+ const final=await (await apiCall('upload_attachment',last,browser)).json();assert.equal(final.complete,true);assert.equal(final.attachment.size,data.length);assert.equal(final.attachment.contentType,'application/octet-stream');
+ assert.deepEqual(await rpcValue(await rpcCall('upload_attachment',last,headers)),final);
+ const download=await images.GET(request('/api/images?id='+final.attachment.id,undefined,browser,'GET'));assert.deepEqual(Buffer.from(await download.arrayBuffer()),data);
+ const tail=await rpcValue(await rpcCall('get_attachment',{id:final.attachment.id,includeData:true,offset:UPLOAD_PART_SIZE,length:123},headers));assert.deepEqual(Buffer.from(tail.dataBase64,'base64'),data.subarray(UPLOAD_PART_SIZE));
+ await rpcValue(await rpcCall('add_comment',{taskId:taskA.id,body:'Synthetic large camera upload',attachmentIds:[final.attachment.id],requestKey:'large-camera-comment'},headers));
+ globalThis.__authRouteEnv.TASK_BOARD_READ_ONLY='true';assert.equal((await rpcCall('upload_attachment',last,headers)).status,403);
 });

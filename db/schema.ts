@@ -42,3 +42,14 @@ export const accessEvents=sqliteTable('access_events',{
  owner:text('owner').notNull(),id:text('id').notNull(),email:text('email').notNull(),action:text('action').notNull(),actorUserId:text('actor_user_id').notNull(),
  access:text('access').notNull(),active:integer('active').notNull(),googleProviderId:text('google_provider_id'),workosUserId:text('workos_user_id'),version:integer('version').notNull(),createdAt:text('created_at').notNull(),
 },t=>[primaryKey({columns:[t.owner,t.id]}),index('idx_access_events_member').on(t.owner,t.email)]);
+
+// Durable multipart receipts let web and MCP retry the same original upload.
+export const attachmentUploads=sqliteTable('attachment_uploads',{
+ owner:text('owner').notNull(),attachmentId:text('attachment_id').notNull(),uploadId:text('upload_id').notNull(),createdAt:text('created_at').notNull(),
+},t=>[primaryKey({columns:[t.owner,t.attachmentId]})]);
+export const attachmentUploadParts=sqliteTable('attachment_upload_parts',{
+ owner:text('owner').notNull(),attachmentId:text('attachment_id').notNull(),partNumber:integer('part_number').notNull(),sha256:text('sha256').notNull(),etag:text('etag'),
+},t=>[primaryKey({columns:[t.owner,t.attachmentId,t.partNumber]})]);
+export const backupManifests=sqliteTable('backup_manifests',{
+ owner:text('owner').notNull(),backupId:text('backup_id').notNull(),payload:text('payload').notNull(),
+},t=>[primaryKey({columns:[t.owner,t.backupId]})]);

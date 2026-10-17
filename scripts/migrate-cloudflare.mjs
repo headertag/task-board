@@ -1,3 +1,4 @@
+import {FILE_LIMIT} from '../lib/upload-limits.ts';
 import {prepareAttachment} from '../lib/attachments.ts';
 // One-time, owner-scoped migration. Routine deployments never call this script.
 import {open, lstat} from 'node:fs/promises';
@@ -6,7 +7,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash,createHmac} from 'node:crypto';
 import {validateBackup} from '../lib/backup.ts';
-import {boundedBytes,IMAGE_LIMIT} from '../lib/image.ts';
+import {boundedBytes} from '../lib/image.ts';
 import {hash, stable, stableId} from '../lib/safety.ts';
 
 export class MigrationError extends Error {
@@ -137,7 +138,7 @@ export function cloudflareTransport(options, fetcher=fetch) {
       if (response.status===404) { await response.body?.cancel();return null; }
       if (!response.ok) stop(response.status===401||response.status===403?'remote_authorization':'remote_request');
       if (!response.body) stop('remote_response');
-      try { return await boundedBytes(response.body,IMAGE_LIMIT); } catch { stop('remote_response'); }
+      try { return await boundedBytes(response.body,FILE_LIMIT); } catch { stop('remote_response'); }
     },
     async putObject(key,bytes) {
       // REST object PUT ignores this condition; signed S3 PUT honors atomic create-only.

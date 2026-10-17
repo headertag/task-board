@@ -16,7 +16,7 @@ This repository contains application code and fictional fixtures only. It does n
 - Saved task checklists with stable item IDs, item-level MCP editing, and crossed-out completed items
 - Spacious read-first task details with separate editing and unsaved-draft protection
 - Safe clickable source links, product cards and address/map cards without external preview fetching
-- Durable comments with independent revisions, recoverable removal, private normalized image attachments plus exact-byte PDF and generic file uploads (2 MiB each)
+- Durable comments with independent revisions, recoverable removal, private original photo, PDF and generic file uploads (100 MiB each, resumable above 5 MiB; no board-wide attachment count or storage quota)
 - Checksummed complete backups containing tasks, all history, comments, private images and recovery snapshots
 
 No external task ingestion, notifications, reminders, or automatic synchronization is included. The fictional examples are generated only when a user's board has no records.
