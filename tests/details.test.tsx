@@ -125,7 +125,7 @@ resetChecklist();openChecklist();await screen.findByRole('checkbox',{name:'Milk'
 const pdfBytes=Buffer.from('%PDF-1.4 Synthetic fixture');
 const pdf={name:'fixture.pdf',type:'application/pdf',size:pdfBytes.length,lastModified:1,arrayBuffer:async()=>pdfBytes.buffer.slice(pdfBytes.byteOffset,pdfBytes.byteOffset+pdfBytes.length)};
 fireEvent.change(screen.getByLabelText('Upload task files'),{target:{files:[pdf]}});
-await screen.findByRole('link',{name:/fixture.pdf/});assert.equal(fileUploads.length,1);assert.equal(fileUploads[0].contentType,'application/octet-stream');assert.deepEqual(Buffer.from(fileUploads[0].dataBase64,'base64'),pdfBytes);
+await screen.findByRole('link',{name:/fixture.pdf/});assert.equal(screen.queryByRole('link',{name:'Download all (ZIP)'}),null);assert.equal(fileUploads.length,1);assert.equal(fileUploads[0].contentType,'application/octet-stream');assert.deepEqual(Buffer.from(fileUploads[0].dataBase64,'base64'),pdfBytes);
 assert.equal(screen.getByRole('link',{name:/fixture.pdf/}).getAttribute('download'),'fixture.pdf');
 resetChecklist();openChecklist();await screen.findByRole('link',{name:/fixture.pdf/});
 fireEvent.change(screen.getByLabelText('Upload task files'),{target:{files:[{...pdf,size:100*1024*1024+1}]}});await screen.findByText('Choose a nonempty file up to 100 MB');assert.equal(fileUploads.length,1);
@@ -142,4 +142,10 @@ fireEvent.click(thumbnail);await screen.findByRole('link',{name:'Download origin
 cleanup();openChecklist();const broken=await screen.findByRole('button',{name:'Preview original-photo.jpeg'});fireEvent.error(broken.querySelector('img')!);
 assert.ok(screen.getByRole('link',{name:'original-photo.jpeg'}));assert.equal(screen.queryByRole('button',{name:'Preview original-photo.jpeg'}),null);
 console.log('PASS generic JPEG thumbnail, original download, failed-preview fallback and shared task action row');
+cleanup();
+
+resetChecklist();openChecklist({canWrite:false});await screen.findByRole('link',{name:'Download all (ZIP)'});
+assert.equal(screen.getByRole('link',{name:'Download all (ZIP)'}).getAttribute('href'),'/api/attachments/zip?taskId='+a.id);
+assert.equal(screen.queryByRole('button',{name:'Add image / PDF / file'}),null);
+console.log('PASS multiple saved attachments expose a private ZIP download for read-only users');
 cleanup();

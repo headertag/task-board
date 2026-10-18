@@ -778,7 +778,7 @@ test('web/MCP checklist and file parity: real sessions, discovery, retries, down
   const names=(await (await mcp.POST(rpcRequest('tools/list',null,headers))).json()).result.tools.map(t=>t.name);
   for(const name of ['edit_checklist','upload_attachment','list_attachments','get_attachment'])assert.ok(names.includes(name));
   const initialized=(await (await mcp.POST(rpcRequest('initialize',null,headers))).json()).result;
-  assert.equal(initialized.serverInfo.version,'1.4.0');
+  assert.equal(initialized.serverInfo.version,'1.4.1');
   let task=(await rpcValue(await rpcCall('create_task',{task:{title:'Synthetic parity test'},requestKey:'parity-create-task'},headers))).task;
   const itemId=crypto.randomUUID();
   for(const [index,edit] of [{action:'add',text:'Film'},{action:'update',text:'Renamed film'},{action:'update',checked:true},{action:'update',checked:false},{action:'remove'}].entries()){
@@ -867,4 +867,34 @@ test('large originals upload through shared resumable web/MCP parts without PNG 
  const tail=await rpcValue(await rpcCall('get_attachment',{id:final.attachment.id,includeData:true,offset:UPLOAD_PART_SIZE,length:123},headers));assert.deepEqual(Buffer.from(tail.dataBase64,'base64'),data.subarray(UPLOAD_PART_SIZE));
  await rpcValue(await rpcCall('add_comment',{taskId:taskA.id,body:'Synthetic large camera upload',attachmentIds:[final.attachment.id],requestKey:'large-camera-comment'},headers));
  globalThis.__authRouteEnv.TASK_BOARD_READ_ONLY='true';assert.equal((await rpcCall('upload_attachment',last,headers)).status,403);
+});
+
+test('private ZIP download shares MCP attachment list, preserves originals and read-only access, rejects unauthorized requests',async()=>{
+ const zipRoute=await import('../app/api/attachments/zip/route.ts');
+ const {ZipReader,Uint8ArrayReader,Uint8ArrayWriter}=await import('@zip.js/zip.js');
+ const task=await serviceA.mutate('create',{task:{title:'Synthetic ZIP test'},requestKey:'zip-route-task'});
+ const inputs=[Buffer.from('%PDF-1.4 fictional PDF'),Buffer.from([255,216,255,224,0,1,2,3])];
+ const files=[];for(let i=0;i<2;i++)files.push(await serviceA.activity.upload(task.id,'zip-route-file-'+i,inputs[i],'same-name.dat','application/octet-stream'));
+ await serviceA.activity.mutate('add',{taskId:task.id,body:'Synthetic attachment comment',attachmentIds:[files[0].id],requestKey:'zip-route-comment'});
+ const headers=bearer(await token());const session=await browserSession();const browser={cookie:session.cookie,origin};
+ const listed=await rpcValue(await rpcCall('list_attachments',{taskId:task.id},headers));
+ assert.equal(listed.attachments.length,2);assert.equal(listed.downloadPath,'/api/attachments/zip?taskId='+task.id);
+ assert.deepEqual(await (await apiCall('list_attachments',{taskId:task.id},browser)).json(),listed);
+ globalThis.__authRouteEnv.TASK_BOARD_READ_ONLY='true';
+ for(const auth of [headers,browser]){
+  const response=await zipRoute.GET(request(listed.downloadPath,undefined,auth,'GET'));
+  assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'application/zip');assert.match(response.headers.get('cache-control'),/no-store/);assert.match(response.headers.get('content-disposition'),/^attachment;/);
+  const reader=new ZipReader(new Uint8ArrayReader(new Uint8Array(await response.arrayBuffer())),{useWebWorkers:false});
+  const entries=await reader.getEntries();assert.deepEqual(entries.map(e=>e.filename),['same-name.dat','same-name (2).dat']);
+  for(let i=0;i<2;i++)assert.deepEqual(Buffer.from(await entries[i].getData(new Uint8ArrayWriter(),{checkSignature:true})),inputs[i]);await reader.close();
+ }
+ await denied(await zipRoute.GET(request(listed.downloadPath,undefined,{},'GET')),401);
+ await denied(await zipRoute.GET(request(listed.downloadPath,undefined,bearer(await token({sub:'user_synthetic_b'})),'GET')),404);
+ await denied(await zipRoute.GET(request(listed.downloadPath,undefined,{...browser,origin:'https://evil.example'},'GET')),403,'origin_mismatch');
+ await denied(await zipRoute.GET(request('/api/attachments/zip?taskId=invalid',undefined,headers,'GET')),400);
+ assert.equal((await zipRoute.POST(request(listed.downloadPath,{},headers))).status,405);
+ const empty=await serviceA.mutate('create',{task:{title:'Synthetic empty ZIP task'},requestKey:'zip-empty-task'});
+ await denied(await zipRoute.GET(request('/api/attachments/zip?taskId='+empty.id,undefined,headers,'GET')),404,'no_attachments');
+ users.user_synthetic_a.email_verified=false;
+ await denied(await zipRoute.GET(request(listed.downloadPath,undefined,headers,'GET')),403);
 });
