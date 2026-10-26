@@ -59,6 +59,17 @@ assert.equal(savedTask.checklist[1].text,'Bread');assert.equal(savedTask.checkli
 assert.equal(screen.getByText('Bread').tagName,'S');assert.equal(screen.queryByText('Milk'),null);
 console.log('PASS checklist add/edit/remove/checked editing keeps stable item IDs and crosses out saved checked text');
 
+resetChecklist();checklistView=openChecklist();await screen.findByRole('checkbox',{name:'Milk'});
+fireEvent.click(screen.getByRole('button',{name:'Edit task'}));
+const multiline=screen.getByLabelText('Checklist item 1') as HTMLTextAreaElement;
+assert.equal(multiline.tagName,'TEXTAREA');assert.equal(multiline.maxLength,500);assert.equal(multiline.required,true);
+const longChecklistText='A long checklist entry with details to review before finishing. '.repeat(4)+'\n'+'LongUnbrokenToken'.repeat(12);
+fireEvent.change(multiline,{target:{value:longChecklistText}});
+fireEvent.click(screen.getByRole('button',{name:'Save changes'}));await screen.findByRole('button',{name:'Edit task'});
+assert.equal(savedTask.checklist[0].text,longChecklistText);assert.equal(savedTask.checklist[0].id,itemA.id);
+fireEvent.click(screen.getByRole('button',{name:'Edit task'}));assert.equal((screen.getByLabelText('Checklist item 1') as HTMLTextAreaElement).value,longChecklistText);
+console.log('PASS multiline checklist text persists through save and reopen with stable item IDs');
+
 resetChecklist();checklistView=openChecklist();await screen.findByRole('checkbox',{name:'Milk'});writeMode='hold';
 fireEvent.click(screen.getByRole('checkbox',{name:'Milk'}));await waitFor(()=>assert.ok(releaseWrite));
 assert.equal((screen.getByRole('checkbox',{name:'Milk'}) as HTMLInputElement).disabled,true);
