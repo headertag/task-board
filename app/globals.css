@@ -184,3 +184,14 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .attachment-download{overflow-wrap:anywhere;min-width:0;grid-column:1/-1}
 
 .attachment-heading{flex-wrap:wrap}.attachment-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+
+/* Mobile status columns remain separately scrollable and snap on horizontal swipes. */
+.mobile-column-nav{display:none}
+@media(max-width:600px){
+ .mobile-column-nav{display:flex;gap:6px;overflow-x:auto;margin-bottom:10px}
+ .mobile-column-nav button{flex:1 0 auto;min-height:44px;padding:8px 10px;border:1px solid #68451f;border-radius:5px;background:#160e07;color:#d49b58;font:inherit;font-size:11px}
+ .mobile-column-nav button[aria-pressed=true]{background:#422910;color:#ffbd72;border-color:#d4862c}
+ .mobile-column-nav span{font-size:10px;opacity:.8}
+ .board.columns-3,.board.columns-2{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:100%;height:calc(100dvh - 215px);min-height:260px;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;overscroll-behavior-x:contain;scrollbar-width:thin}
+ .board.columns-3>.column,.board.columns-2>.column{min-height:0;overflow-y:auto;scroll-snap-align:start;scroll-snap-stop:always}
+}
