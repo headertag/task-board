@@ -42,6 +42,18 @@ for(const value of ['https://foreign.example/','//foreign.example/','/\\foreign.
 assert.equal(safeReturnTo(taskPath(a.id)),taskPath(a.id));
 console.log('PASS strict task identity and same-origin sign-in destinations');
 
+await mount('/');
+const columnNav=screen.getByRole('navigation',{name:'Task columns'}),scroller=document.querySelector('.board') as HTMLElement;
+scroller.scrollTo=({left}:any)=>{scroller.scrollLeft=left};
+for(const [i,column] of Array.from(scroller.querySelectorAll<HTMLElement>('[data-status]')).entries())column.getBoundingClientRect=()=>({left:i*400-scroller.scrollLeft} as DOMRect);
+scroller.getBoundingClientRect=()=>({left:0} as DOMRect);
+const todo=within(columnNav).getByRole('button',{name:/To do/}),progress=within(columnNav).getByRole('button',{name:/In progress/}),hold=within(columnNav).getByRole('button',{name:/On hold/});
+assert.equal(todo.getAttribute('aria-pressed'),'true');fireEvent.click(progress);assert.equal(scroller.scrollLeft,400);assert.equal(progress.getAttribute('aria-pressed'),'true');
+scroller.scrollLeft=800;fireEvent.scroll(scroller);assert.equal(hold.getAttribute('aria-pressed'),'true');
+fireEvent.mouseDown(screen.getByRole('tab',{name:/Closed/}),{button:0,ctrlKey:false});assert.equal(screen.getByRole('button',{name:/Completed/}).getAttribute('aria-pressed'),'true');
+fireEvent.mouseDown(screen.getByRole('tab',{name:/Active/}),{button:0,ctrlKey:false});assert.equal(screen.getByRole('button',{name:/To do/}).getAttribute('aria-pressed'),'true');
+console.log('PASS mobile column buttons, horizontal scroll selection and view reset');
+
 await mount(taskPath(b.id),false);await heading(b.title);
 assert.ok(calls.some(c=>c.name==='get_task'&&c.args.id===b.id));
 assert.equal(screen.queryByRole('button',{name:'Edit task'}),null);
