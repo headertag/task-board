@@ -185,13 +185,14 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 
 .attachment-heading{flex-wrap:wrap}.attachment-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 
-/* Mobile status columns remain separately scrollable and snap on horizontal swipes. */
+/* Mobile uses the page for vertical scrolling and gestures to change columns. */
 .mobile-column-nav{display:none}
 @media(max-width:600px){
- .mobile-column-nav{display:flex;gap:6px;overflow-x:auto;margin-bottom:10px}
+ .topbar{padding:8px 12px;gap:4px 8px;align-items:center}.brandmark{width:32px;height:32px}.brand h1{font-size:15px;margin:0}.brand p{font-size:9px;line-height:1.3}.topactions{gap:0}.topactions .quiet{padding:9px}.topactions .primary{padding:8px 10px}.workspace{padding:14px 12px}.workspace-heading{margin-bottom:12px}.workspace h2{font-size:19px;margin-bottom:3px}.view-tabs{margin-bottom:10px!important;padding-bottom:7px!important;gap:3px}.view-tabs button{padding:8px 7px}
+ .mobile-column-nav{display:flex;position:sticky;top:0;z-index:5;gap:5px;overflow-x:auto;margin-bottom:10px;padding:6px 0;background:#100a05}
  .mobile-column-nav button{flex:1 0 auto;min-height:44px;padding:8px 10px;border:1px solid #68451f;border-radius:5px;background:#160e07;color:#d49b58;font:inherit;font-size:11px}
- .mobile-column-nav button[aria-pressed=true]{background:#422910;color:#ffbd72;border-color:#d4862c}
- .mobile-column-nav span{font-size:10px;opacity:.8}
- .board.columns-3,.board.columns-2{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:100%;height:calc(100dvh - 215px);min-height:260px;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;overscroll-behavior-x:contain;scrollbar-width:thin}
- .board.columns-3>.column,.board.columns-2>.column{min-height:0;overflow-y:auto;scroll-snap-align:start;scroll-snap-stop:always}
+ .mobile-column-nav button[aria-pressed=true]{background:#422910;color:#ffbd72;border-color:#d4862c}.mobile-column-nav span{font-size:10px;opacity:.8}
+ .board.columns-3,.board.columns-2{display:block;touch-action:pan-y pinch-zoom}
+ .board.columns-3>.column[data-mobile-active=false],.board.columns-2>.column[data-mobile-active=false]{display:none}
+ input:not([type=checkbox]):not([type=radio]),textarea,select,[data-slot=select-trigger]{font-size:16px!important}
 }
