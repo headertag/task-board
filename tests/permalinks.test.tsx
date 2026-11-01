@@ -51,6 +51,7 @@ assert.equal(todo.getAttribute('aria-pressed'),'true');
 fireEvent.touchStart(board,{touches:[{clientX:300,clientY:300}]});fireEvent.touchEnd(board,{changedTouches:[{clientX:100,clientY:305}]});
 assert.equal(progress.getAttribute('aria-pressed'),'true');assert.equal(board.querySelector('[data-status="InProgress"]')?.getAttribute('data-mobile-active'),'true');
 fireEvent.touchStart(board,{touches:[{clientX:300,clientY:300}]});fireEvent.touchEnd(board,{changedTouches:[{clientX:290,clientY:100}]});assert.equal(progress.getAttribute('aria-pressed'),'true');
+fireEvent.touchStart(board,{touches:[{clientX:300,clientY:300}]});fireEvent.touchStart(board,{touches:[{clientX:300,clientY:300},{clientX:250,clientY:300}]});fireEvent.touchEnd(board,{changedTouches:[{clientX:100,clientY:300}]});assert.equal(progress.getAttribute('aria-pressed'),'true');
 fireEvent.click(hold);assert.equal(hold.getAttribute('aria-pressed'),'true');
 fireEvent.mouseDown(screen.getByRole('tab',{name:/Closed/}),{button:0,ctrlKey:false});assert.equal(screen.getByRole('button',{name:/Completed/}).getAttribute('aria-pressed'),'true');
 fireEvent.mouseDown(screen.getByRole('tab',{name:/Active/}),{button:0,ctrlKey:false});assert.equal(screen.getByRole('button',{name:/To do/}).getAttribute('aria-pressed'),'true');
