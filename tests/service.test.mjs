@@ -148,3 +148,26 @@ await assert.rejects(()=>execute(checklistService,'edit_checklist',itemArgs('upd
 const full=await checklistService.mutate('create',{task:{title:'Synthetic full list',checklist:Array.from({length:100},()=>({id:crypto.randomUUID(),text:'Item',checked:false}))},requestKey:'item-limit-task'});
 await assert.rejects(()=>execute(checklistService,'edit_checklist',{id:full.id,expectedRevision:1,requestKey:'item-over-limit',action:'add',itemId:crypto.randomUUID(),text:'Too many'}));
 console.log('PASS item checklist CRUD, check/uncheck, reorder, replay, limits, owner isolation and preserved task history');
+
+// Capacity fixtures use isolated SQLite owners and never access production data.
+const capacityOwner='synthetic-task-capacity',capacityService=new BoardService(db,capacityOwner);
+const template={...validateTask({title:'Synthetic capacity fixture'}),id:crypto.randomUUID(),revision:1,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),archived:false};
+const insertTask=sqlite.prepare('INSERT INTO tasks(owner,id,payload,status,archived,revision,updated_at,last_mutation) VALUES(?,?,?,?,?,?,?,?)');
+for(let i=0;i<999;i++){const t={...template,id:crypto.randomUUID(),archived:i<7,status:i<10?'Completed':'ToDo'};insertTask.run(capacityOwner,t.id,JSON.stringify(t),t.status,t.archived?1:0,1,t.updatedAt,'fixture-'+i)}
+assert.equal((await capacityService.list()).length,992);assert.equal((await capacityService.list(true)).length,7);
+const contenders=[{task:{title:'Synthetic race one'},requestKey:'capacity-race-one'},{task:{title:'Synthetic race two'},requestKey:'capacity-race-two'}];
+const raceAtLimit=await Promise.allSettled(contenders.map(args=>capacityService.mutate('create',args)));
+assert.equal(raceAtLimit.filter(x=>x.status==='fulfilled').length,1);assert.equal(raceAtLimit.filter(x=>x.status==='rejected'&&x.reason.code==='task_capacity').length,1);
+const winner=raceAtLimit.findIndex(x=>x.status==='fulfilled');assert.deepEqual(await capacityService.mutate('create',contenders[winner]),raceAtLimit[winner].value);
+await assert.rejects(()=>capacityService.mutate('create',{requestKey:'capacity-bad-input',task:{title:''}}),e=>e.name==='ZodError');
+await assert.rejects(()=>capacityService.export(),e=>e.code==='portable_limit');
+assert.equal((await capacityService.list()).length,993,'All active records beyond the old 501-row boundary must be returned');
+const fullCommentOwner='synthetic-comment-capacity',commentsService=new BoardService(db,fullCommentOwner);
+const commentTask=await commentsService.mutate('create',{task:{title:'Synthetic comment capacity'},requestKey:'comment-capacity-task'});
+const insertComment=sqlite.prepare('INSERT INTO comments(owner,id,task_id,payload,revision,last_mutation) VALUES(?,?,?,?,?,?)');
+for(let i=0;i<4999;i++){const id=crypto.randomUUID(),record={id,taskId:commentTask.id,body:'Synthetic retained comment',attachmentIds:[],revision:1,createdAt:template.createdAt,updatedAt:template.updatedAt,archived:i===0};insertComment.run(fullCommentOwner,id,commentTask.id,JSON.stringify(record),1,'comment-fixture-'+i)}
+const commentsRace=[{taskId:commentTask.id,body:'Synthetic comment A',requestKey:'comment-race-one'},{taskId:commentTask.id,body:'Synthetic comment B',requestKey:'comment-race-two'}];
+const commentResults=await Promise.allSettled(commentsRace.map(args=>commentsService.activity.mutate('add',args)));
+assert.equal(commentResults.filter(x=>x.status==='fulfilled').length,1);assert.equal(commentResults.filter(x=>x.status==='rejected'&&x.reason.code==='comment_capacity').length,1);
+const commentWinner=commentResults.findIndex(x=>x.status==='fulfilled');assert.deepEqual(await commentsService.activity.mutate('add',commentsRace[commentWinner]),commentResults[commentWinner].value);
+console.log('PASS live capacity race, explicit errors, retry receipts and untruncated owner-scoped task reads');

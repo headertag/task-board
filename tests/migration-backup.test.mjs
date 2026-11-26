@@ -181,3 +181,20 @@ test('more than 100 original files and a large camera image retain bounded curso
   if(version===3){const root=await area(t);const recovered=await recoverBackup(pages,path.join(root,'recovered'),owner);assert.equal(recovered.complete,true);assert.deepEqual(await readFile(path.join(recovered.objects,large.attachment.id+'.png')),camera)}
  }
 });
+
+test('task 101 and comment 501 survive complete backup and isolated recovery with retained history',async t=>{
+ const f=await fixture(t);let first=await f.service.mutate('restore',{id:f.task.id,expectedRevision:f.task.revision,requestKey:'capacity-fixture-restore'});
+ for(let i=1;i<=100;i++)await f.service.mutate('create',{task:{title:'Synthetic task '+i},requestKey:'capacity-fixture-task-'+i});
+ let completed=await f.service.mutate('create',{task:{title:'Synthetic completed'},requestKey:'capacity-completed-create'});
+ completed=await f.service.mutate('complete',{id:completed.id,expectedRevision:completed.revision,requestKey:'capacity-completed-finish'});
+ let trashed=await f.service.mutate('create',{task:{title:'Synthetic trash'},requestKey:'capacity-trash-create'});
+ trashed=await f.service.mutate('archive',{id:trashed.id,expectedRevision:trashed.revision,requestKey:'capacity-trash-archive'});
+ for(let i=1;i<=500;i++)await f.service.activity.mutate('add',{taskId:first.id,body:'Synthetic comment '+i,requestKey:'capacity-fixture-comment-'+i});
+ assert.equal((await f.service.list()).length,102);assert.equal((await f.service.list(true)).length,1);
+ const pages=[await backupPage(f.db,owner,f.images,null,100)];while(pages.at(-1).nextCursor)pages.push(await backupPage(f.db,owner,f.images,pages.at(-1).nextCursor,100));
+ const validated=await validateBackup(pages);assert.equal(validated.tasks.length,103);assert.equal(validated.comments.length,501);
+ const root=await area(t),recovered=await recoverBackup(pages,path.join(root,'capacity-recovery'),owner),restored=new DatabaseSync(recovered.database);t.after(()=>restored.close());
+ assert.equal(restored.prepare('SELECT COUNT(*) AS n FROM tasks WHERE owner=?').get(owner).n,103);assert.equal(restored.prepare('SELECT COUNT(*) AS n FROM comments WHERE owner=?').get(owner).n,501);
+ assert.equal(restored.prepare('SELECT archived FROM tasks WHERE owner=? AND id=?').get(owner,trashed.id).archived,1);assert.equal(restored.prepare('SELECT status FROM tasks WHERE owner=? AND id=?').get(owner,completed.id).status,'Completed');
+ assert.equal(restored.prepare('SELECT COUNT(*) AS n FROM task_events WHERE owner=?').get(owner).n,validated.history.length);assert.equal(restored.prepare('SELECT COUNT(*) AS n FROM comment_events WHERE owner=?').get(owner).n,validated.commentHistory.length);
+});
