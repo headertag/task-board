@@ -778,7 +778,7 @@ test('web/MCP checklist and file parity: real sessions, discovery, retries, down
   const names=(await (await mcp.POST(rpcRequest('tools/list',null,headers))).json()).result.tools.map(t=>t.name);
   for(const name of ['edit_checklist','upload_attachment','list_attachments','get_attachment'])assert.ok(names.includes(name));
   const initialized=(await (await mcp.POST(rpcRequest('initialize',null,headers))).json()).result;
-  assert.equal(initialized.serverInfo.version,'1.4.1');
+  assert.equal(initialized.serverInfo.version,'1.4.2');
   let task=(await rpcValue(await rpcCall('create_task',{task:{title:'Synthetic parity test'},requestKey:'parity-create-task'},headers))).task;
   const itemId=crypto.randomUUID();
   for(const [index,edit] of [{action:'add',text:'Film'},{action:'update',text:'Renamed film'},{action:'update',checked:true},{action:'update',checked:false},{action:'remove'}].entries()){
@@ -897,4 +897,21 @@ test('private ZIP download shares MCP attachment list, preserves originals and r
  await denied(await zipRoute.GET(request('/api/attachments/zip?taskId='+empty.id,undefined,headers,'GET')),404,'no_attachments');
  users.user_synthetic_a.email_verified=false;
  await denied(await zipRoute.GET(request(listed.downloadPath,undefined,headers,'GET')),403);
+});
+
+test('capacity and invalid input remain distinct in Web and MCP responses',async()=>{
+ const headers=bearer(await token({client_id:'synthetic-write-client',scope:'openid profile email tasks:write'}));const count=sqlite.prepare('SELECT COUNT(*) AS n FROM tasks WHERE owner=?').get(ownerA).n;
+ const insert=sqlite.prepare('INSERT INTO tasks(owner,id,payload,status,archived,revision,updated_at,last_mutation) VALUES(?,?,?,?,?,?,?,?)');
+ for(let i=count;i<1000;i++){const t={...taskA,id:crypto.randomUUID(),title:'Synthetic capacity record'};insert.run(ownerA,t.id,JSON.stringify(t),t.status,0,t.revision,t.updatedAt,'route-capacity-'+i)}
+ const args={task:{title:'Synthetic preserved draft'},requestKey:'route-capacity-create'};
+ const web=await apiCall('create_task',args,headers);assert.equal(web.status,409);const webError=await web.json();assert.equal(webError.error,'task_capacity');assert.match(webError.message,/not created.*draft/i);
+ const rpc=await (await rpcCall('create_task',args,headers)).json();assert.equal(rpc.result.isError,true);assert.equal(rpc.result.structuredContent.error,'task_capacity');assert.deepEqual(JSON.parse(rpc.result.content[0].text),rpc.result.structuredContent);
+ const invalid=await (await rpcCall('create_task',{task:{title:''},requestKey:'route-capacity-invalid'},headers)).json();assert.equal(invalid.result.isError,true);assert.equal(invalid.result.structuredContent.error,'invalid_input');
+ const commentCount=sqlite.prepare('SELECT COUNT(*) AS n FROM comments WHERE owner=?').get(ownerA).n;
+ const add=sqlite.prepare('INSERT INTO comments(owner,id,task_id,payload,revision,last_mutation) VALUES(?,?,?,?,?,?)');
+ for(let i=commentCount;i<5000;i++){const id=crypto.randomUUID(),c={...commentA,id,body:'Synthetic retained comment'};add.run(ownerA,id,taskA.id,JSON.stringify(c),c.revision,'route-comment-'+i)}
+ const commentArgs={taskId:taskA.id,body:'Synthetic comment draft',requestKey:'route-comment-capacity'};
+ const webComment=await apiCall('add_comment',commentArgs,headers);assert.equal(webComment.status,409);assert.equal((await webComment.json()).error,'comment_capacity');
+ const rpcComment=await (await rpcCall('add_comment',commentArgs,headers)).json();assert.equal(rpcComment.result.structuredContent.error,'comment_capacity');assert.match(rpcComment.result.structuredContent.message,/draft was not posted/i);
+ const stale=await (await rpcCall('edit_comment',{id:commentA.id,expectedRevision:999,body:'Synthetic stale draft',requestKey:'route-comment-stale'},headers)).json();assert.equal(stale.result.structuredContent.error,'revision_conflict');
 });

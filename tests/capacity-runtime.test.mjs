@@ -1,0 +1,19 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {readFile,readdir} from 'node:fs/promises';
+import {Miniflare} from 'miniflare';
+const {build}=createRequire(import.meta.resolve('wrangler/package.json'))('esbuild');
+test('concurrent task and comment creates stop atomically at capacity in workerd and D1',async t=>{
+ const bundle=await build({stdin:{contents:`import {BoardService} from './lib/service';import {execute,safeError} from './lib/operations';export default {async fetch(req,env){try{const {owner,name,args}=await req.json();return Response.json(await execute(new BoardService(env.DB,owner),name,args))}catch(e){const r=safeError(e);return Response.json(r.body,{status:r.status})}}}`,resolveDir:process.cwd(),loader:'ts'},bundle:true,write:false,format:'esm',platform:'browser',external:['node:crypto'],logLevel:'silent'});
+ const mf=new Miniflare({modules:[{type:'ESModule',path:'worker.js',contents:bundle.outputFiles[0].text}],compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],d1Databases:['DB']});t.after(()=>mf.dispose());
+ const db=await mf.getD1Database('DB');for(const f of (await readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort())for(const statement of (await readFile('drizzle/'+f,'utf8')).split('--> statement-breakpoint').map(s=>s.trim()).filter(Boolean))await db.prepare(statement).run();
+ const request=(owner,name,args)=>mf.dispatchFetch('http://localhost/',{method:'POST',body:JSON.stringify({owner,name,args})});
+ await db.prepare("WITH RECURSIVE seq(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM seq WHERE n<999) INSERT INTO tasks(owner,id,payload,status,archived,revision,updated_at,last_mutation) SELECT 'task-race-owner','fixture-'||n,'{}','ToDo',0,1,'2026-01-01','fixture' FROM seq").run();
+ const creates=[0,1].map(i=>request('task-race-owner','create_task',{task:{title:'Synthetic task '+i},requestKey:'runtime-task-race-'+i}));const taskResults=await Promise.all(creates);assert.deepEqual(taskResults.map(r=>r.status).sort(),[200,409]);assert.equal((await taskResults.find(r=>r.status===409).json()).error,'task_capacity');assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE owner='task-race-owner'").first()).n,1000);
+ await db.prepare("WITH RECURSIVE seq(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM seq WHERE n<999) INSERT INTO tasks(owner,id,payload,status,archived,revision,updated_at,last_mutation) SELECT 'retry-race-owner','fixture-'||n,'{}','ToDo',0,1,'2026-01-01','fixture' FROM seq").run();
+ const same={task:{title:'Synthetic identical concurrent retry'},requestKey:'runtime-identical-race'};const replay=await Promise.all([request('retry-race-owner','create_task',same),request('retry-race-owner','create_task',same)]);assert.deepEqual(replay.map(r=>r.status),[200,200]);const [first,second]=await Promise.all(replay.map(r=>r.json()));assert.deepEqual(first,second);assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE owner='retry-race-owner'").first()).n,1000);
+ const task=await (await request('comment-race-owner','create_task',{task:{title:'Synthetic comment task'},requestKey:'runtime-comment-task'})).json();
+ await db.prepare("WITH RECURSIVE seq(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM seq WHERE n<4999) INSERT INTO comments(owner,id,task_id,payload,revision,last_mutation) SELECT 'comment-race-owner','fixture-'||n,?,'{}',1,'fixture' FROM seq").bind(task.task.id).run();
+ const comments=[0,1].map(i=>request('comment-race-owner','add_comment',{taskId:task.task.id,body:'Synthetic comment '+i,requestKey:'runtime-comment-race-'+i}));const commentResults=await Promise.all(comments);assert.deepEqual(commentResults.map(r=>r.status).sort(),[200,409]);assert.equal((await commentResults.find(r=>r.status===409).json()).error,'comment_capacity');assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM comments WHERE owner='comment-race-owner'").first()).n,5000);
+});
